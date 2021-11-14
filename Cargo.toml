@@ -1,0 +1,11 @@
+[package]
+name = "ridser"
+version = "0.1.0"
+authors = ["Erik Wegner"]
+edition = "2021"
+
+[lib]
+path ="./src/lib/lib.rs"
+
+[dependencies]
+rocket = "0.5.0-rc.1"
