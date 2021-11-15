@@ -11,3 +11,7 @@ pub struct TokenGeneratorConfiguration {
 pub struct TokenValidationConfiguration {
     pub common: TokenConfiguration,
 }
+
+pub struct RuntimeConfiguration {
+    pub token_url: String,
+}
