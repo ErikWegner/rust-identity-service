@@ -971,6 +971,8 @@ dependencies = [
  "hmac",
  "jwt",
  "rocket",
+ "serde",
+ "serde_json",
  "sha2",
  "ureq",
 ]

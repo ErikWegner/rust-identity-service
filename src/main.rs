@@ -13,7 +13,7 @@ fn index() -> &'static str {
 #[launch]
 fn rocket() -> _ {
     dotenv().ok();
-    init_openid_provider();
+    init_openid_provider().unwrap();
     for (key, value) in env::vars() {
         println!("{}: {}", key, value);
     }
