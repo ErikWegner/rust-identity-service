@@ -1,8 +1,11 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    cfg::{TokenConfiguration, TokenGeneratorConfiguration, TokenValidationConfiguration},
-    deserialize,
+    cfg::{
+        RuntimeConfiguration, TokenConfiguration, TokenGeneratorConfiguration,
+        TokenValidationConfiguration,
+    },
+    construct_redirect_uri, deserialize,
     ridser::{create_token_string, validate_extract},
 };
 
@@ -56,4 +59,23 @@ fn it_converts_body_to_object() {
         result.authorization_endpoint,
         "https://my.server.com/auth/protocol/openid-connect/auth"
     );
+}
+
+#[test]
+fn it_constructs_redirect_uri() {
+    // Arrange
+    let rc = RuntimeConfiguration {
+        authorization_endpoint: String::from(
+            "https://my.server.com/auth/protocol/openid-connect/auth",
+        ),
+        token_url: String::new(),
+        client_id: String::from("c44"),
+        redirect_uri: String::from("http://devserver.local:11280/callback"),
+    };
+
+    // Act
+    let uri = construct_redirect_uri(&rc);
+
+    // Assert
+    assert_eq!(uri, "https://my.server.com/auth/protocol/openid-connect/auth?response_type=code&client_id=c44&redirect_uri=http%3A%2F%2Fdevserver.local%3A11280%2Fcallback&scope=openid");
 }

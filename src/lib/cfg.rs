@@ -15,4 +15,6 @@ pub struct TokenValidationConfiguration {
 pub struct RuntimeConfiguration {
     pub token_url: String,
     pub authorization_endpoint: String,
+    pub client_id: String,
+    pub redirect_uri: String,
 }
