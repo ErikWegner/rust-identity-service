@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::{
     cfg::{TokenConfiguration, TokenGeneratorConfiguration, TokenValidationConfiguration},
+    deserialize,
     ridser::{create_token_string, validate_extract},
 };
 
@@ -31,4 +32,28 @@ fn it_works() {
     let claims = validate_extract(token_str, validator_config);
     assert_claim(&claims, "iss", issuer);
     assert_claim(&claims, "sub", subject);
+}
+
+#[test]
+fn it_converts_body_to_object() {
+    // Arrange
+    let body = String::from(concat!(
+        "{",
+        "\"authorization_endpoint\":\"https://my.server.com/auth/protocol/openid-connect/auth\",",
+        "\"token_endpoint\":\"https://my.server.com/auth/protocol/openid-connect/token\"",
+        "}"
+    ));
+
+    // Act
+    let result = deserialize(body).unwrap();
+
+    // Assert
+    assert_eq!(
+        result.token_endpoint,
+        "https://my.server.com/auth/protocol/openid-connect/token"
+    );
+    assert_eq!(
+        result.authorization_endpoint,
+        "https://my.server.com/auth/protocol/openid-connect/auth"
+    );
 }

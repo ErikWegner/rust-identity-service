@@ -3,7 +3,7 @@ use jwt::{SignWithKey, VerifyWithKey};
 use sha2::Sha256;
 use std::collections::BTreeMap;
 
-use crate::cfg::{RuntimeConfiguration, TokenGeneratorConfiguration, TokenValidationConfiguration};
+use crate::cfg::{TokenGeneratorConfiguration, TokenValidationConfiguration};
 
 pub fn create_token_string(c: TokenGeneratorConfiguration, subject: &str) -> String {
     let key: Hmac<Sha256> = Hmac::new_from_slice(c.common.key.as_bytes()).unwrap();
