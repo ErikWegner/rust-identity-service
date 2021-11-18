@@ -1,20 +1,20 @@
 mod redisconn;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::redisconn::get_redis_connection;
 pub(crate) use dotenv::dotenv;
 use ridser::{cfg::RuntimeConfiguration, construct_redirect_uri, init_openid_provider};
-use rocket::{State, response::Redirect};
+use rocket::{State, http::Status, response::{Redirect}};
 
 #[macro_use]
 extern crate rocket;
 
-extern crate redis;
-use redis::Commands;
+use redis::{Commands, ConnectionLike};
+
 
 struct SharedRedis {
-    redis: Mutex<redis::Connection>,
+    redis: Arc<Mutex<redis::Connection>>,
 }
 
 #[get("/up")]
@@ -23,14 +23,20 @@ fn up() -> &'static str {
 }
 
 #[get("/health")]
-fn health(shared_con: &State<SharedRedis>) -> &'static str {
+fn health(shared_con: &State<SharedRedis>) -> Result<&'static str, Status> {
     // TODO: redis::ConnectionLike.check_connection()
-    "OK"
+    let lockable_redis = Arc::clone(&shared_con.redis);
+    let mut lock = lockable_redis.lock().expect("lock shared cache failed");
+    if !lock.check_connection() {
+        return Err(Status::InternalServerError)
+    }
+    Ok("OK")
 }
 
 #[get("/login")]
 fn login(rc: &State<RuntimeConfiguration>, shared_con: &State<SharedRedis>) -> Redirect {
-    let mut lock = shared_con.redis.lock().expect("lock shared cache failed");
+    let lockable_redis = Arc::clone(&shared_con.redis);
+    let mut lock = lockable_redis.lock().expect("lock shared cache failed");
     let _: () = lock
         .set("my_key", 42)
         .unwrap_or_else(|_| panic!("Could not write to cache."));
@@ -50,7 +56,7 @@ fn rocket() -> _ {
     rocket::build()
         .manage(rc)
         .manage(SharedRedis {
-            redis: Mutex::new(conn),
+            redis: Arc::new(Mutex::new(conn)),
         })
         .mount("/", routes![up, health, login, callback])
 }
