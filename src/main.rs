@@ -7,7 +7,11 @@ use crate::redisconn::get_redis_connection;
 pub(crate) use dotenv::dotenv;
 use redisconn::DataProvider;
 use ridser::{cfg::RuntimeConfiguration, construct_redirect_uri, init_openid_provider};
-use rocket::{Build, Rocket, State, http::Status, response::{Redirect, content, status::{self, BadRequest}}};
+use rocket::{
+    http::Status,
+    response::{content, status, Redirect},
+    Build, Rocket, State,
+};
 
 #[macro_use]
 extern crate rocket;
@@ -22,12 +26,17 @@ fn up() -> &'static str {
 }
 
 #[get("/health")]
-fn health(shared_con: &State<SharedRedis>) -> Result<&'static str, Status> {
+fn health(
+    shared_con: &State<SharedRedis>,
+) -> Result<&'static str, status::Custom<content::Json<&'static str>>> {
     // TODO: redis::ConnectionLike.check_connection()
     let lockable_redis = Arc::clone(&shared_con.redis);
     let mut lock = lockable_redis.lock().expect("lock shared cache failed");
     if !lock.check_connection() {
-        return Err(Status::InternalServerError);
+        return Err(status::Custom(
+            Status::InternalServerError,
+            content::Json("{\"message\": \"redis disconnected\"}"),
+        ));
     }
     Ok("OK")
 }
@@ -40,7 +49,10 @@ fn login(
     shared_con: &State<SharedRedis>,
 ) -> Result<Redirect, status::Custom<content::Json<&'static str>>> {
     if client_id.is_none() {
-        return Err(status::Custom(Status::BadRequest, content::Json("{\"message\": \"client_id is missing\"}")));
+        return Err(status::Custom(
+            Status::BadRequest,
+            content::Json("{\"message\": \"client_id is missing\"}"),
+        ));
     }
     let lockable_redis = Arc::clone(&shared_con.redis);
     let mut lock = lockable_redis.lock().expect("lock shared cache failed");
@@ -54,7 +66,7 @@ fn login(
     )))
 }
 
-#[get("/callback")]
+#[post("/callback")]
 fn callback() -> String {
     String::from("not implemented yet")
 }

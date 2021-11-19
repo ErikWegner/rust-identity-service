@@ -2,11 +2,13 @@ use std::error::Error;
 
 use crate::redisconn::DataProvider;
 
-struct RedisMock;
+pub(crate) struct RedisMock {
+    pub is_connected: bool,
+}
 
 impl DataProvider for RedisMock {
     fn check_connection(&mut self) -> bool {
-        true
+        self.is_connected
     }
 
     fn set_int(&mut self, key: String, value: i64) -> Result<(), Box<dyn Error>> {
@@ -15,6 +17,6 @@ impl DataProvider for RedisMock {
     }
 }
 
-pub(crate) fn get_redis_mock() -> impl DataProvider {
-    RedisMock{}
+pub(crate) fn get_redis_mock() -> RedisMock {
+    RedisMock{is_connected : true}
 }

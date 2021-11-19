@@ -1,10 +1,54 @@
 use crate::build_rocket_instance;
 use crate::redismock::get_redis_mock;
 use ridser::cfg::RuntimeConfiguration;
+use rocket::http::Status;
 use rocket::local::blocking::Client;
 
 use super::rocket;
-use rocket::http::{ContentType, Status};
+
+#[test]
+fn health_is_ok() {
+    // Arrage
+    let rc = RuntimeConfiguration {
+        authorization_endpoint: String::new(),
+        client_id: String::new(),
+        redirect_uri: String::new(),
+        token_url: String::new(),
+    };
+    let conn = get_redis_mock();
+
+    let rocket = build_rocket_instance(rc, Box::new(conn));
+    let client = Client::tracked(rocket).expect("valid rocket instance");
+
+    // Act
+    let response = client.get("/health").dispatch();
+
+    // Assert
+    assert_eq!(response.status(), Status::Ok);
+}
+
+#[test]
+fn health_has_redis_error() {
+    // Arrage
+    let rc = RuntimeConfiguration {
+        authorization_endpoint: String::new(),
+        client_id: String::new(),
+        redirect_uri: String::new(),
+        token_url: String::new(),
+    };
+    let mut conn = get_redis_mock();
+    conn.is_connected = false;
+
+    let rocket = build_rocket_instance(rc, Box::new(conn));
+    let client = Client::tracked(rocket).expect("valid rocket instance");
+
+    // Act
+    let response = client.get("/health").dispatch();
+
+    // Assert
+    assert_eq!(response.status(), Status::InternalServerError);
+    assert_eq!(response.into_string().unwrap(), "{\"message\": \"redis disconnected\"}");
+}
 
 #[test]
 fn login_returns_url() {
