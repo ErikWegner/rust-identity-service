@@ -34,15 +34,16 @@ pub fn init_openid_provider() -> Result<RuntimeConfiguration, Box<dyn Error>> {
     })
 }
 
-pub fn construct_redirect_uri(rc: &RuntimeConfiguration) -> String {
+pub fn construct_redirect_uri(rc: &RuntimeConfiguration, client_id: &str, state: &str) -> String {
     String::from(
         url::Url::parse_with_params(
             &(rc.authorization_endpoint),
             &[
                 ("response_type", "code"),
-                ("client_id", &(rc.client_id)),
+                ("client_id", client_id),
                 ("redirect_uri", &(rc.redirect_uri)),
                 ("scope", "openid"),
+                ("state", state),
             ],
         )
         .unwrap()

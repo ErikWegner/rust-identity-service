@@ -74,8 +74,8 @@ fn it_constructs_redirect_uri() {
     };
 
     // Act
-    let uri = construct_redirect_uri(&rc);
+    let uri = construct_redirect_uri(&rc, "k8", "some6state1");
 
     // Assert
-    assert_eq!(uri, "https://my.server.com/auth/protocol/openid-connect/auth?response_type=code&client_id=c44&redirect_uri=http%3A%2F%2Fdevserver.local%3A11280%2Fcallback&scope=openid");
+    assert_eq!(uri, "https://my.server.com/auth/protocol/openid-connect/auth?response_type=code&client_id=k8&redirect_uri=http%3A%2F%2Fdevserver.local%3A11280%2Fcallback&scope=openid&state=some6state1");
 }
