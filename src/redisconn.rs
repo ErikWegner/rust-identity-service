@@ -2,19 +2,16 @@ use std::{env, error::Error, future::Future, pin::Pin};
 
 use redis::aio::ConnectionManager;
 
+pub type SetIntFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), Box<dyn Error + Send + Sync + 'static>>> + Send + 'a>>;
+
 pub trait DataProvider: Send {
     fn check_connection<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
-    fn set_int<'a>(
-        &'a mut self,
+    fn set_int(
+        &'_ mut self,
         key: String,
         value: i64,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Result<(), Box<dyn Error + Send + Sync + 'static>>>
-                + Send
-                + 'a,
-        >,
-    >;
+    ) -> SetIntFuture;
 }
 
 pub struct RealRedis {
@@ -33,21 +30,16 @@ impl DataProvider for RealRedis {
         Box::pin(ping(self))
     }
 
-    fn set_int<'a>(
-        &'a mut self,
+    fn set_int(
+        &'_ mut self,
         key: String,
         value: i64,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Result<(), Box<dyn Error + Send + Sync + 'static>>>
-                + Send
-                + 'a,
-        >,
-    > {
-        async fn set(
-            r: &'_ mut RealRedis,
-        ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    ) -> SetIntFuture
+    {
+        async fn set(r: &'_ mut RealRedis, key: String, value: i64) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
             if let Err(err) = redis::cmd("SET")
+                .arg(key)
+                .arg(value)
                 .query_async::<ConnectionManager, ()>(&mut r.conn)
                 .await
             {
@@ -56,7 +48,7 @@ impl DataProvider for RealRedis {
                 Ok(())
             }
         }
-        Box::pin(set(self))
+        Box::pin(set(self, key, value))
     }
 }
 

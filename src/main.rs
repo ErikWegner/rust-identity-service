@@ -1,8 +1,7 @@
 mod redisconn;
-mod redismock;
 
-use std::sync::Arc;
 use futures::lock::Mutex;
+use std::sync::Arc;
 
 use crate::redisconn::get_redis_connection;
 pub(crate) use dotenv::dotenv;
@@ -89,6 +88,9 @@ async fn rocket() -> _ {
     let conn = get_redis_connection().await.expect("Redis failed");
     build_rocket_instance(rc, Box::new(conn))
 }
+
+#[cfg(test)]
+mod redismock;
 
 #[cfg(test)]
 mod tests;

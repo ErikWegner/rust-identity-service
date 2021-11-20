@@ -1,8 +1,8 @@
-use std::{error::Error, pin::Pin};
+use std::pin::Pin;
 
 use futures::{future, Future};
 
-use crate::redisconn::DataProvider;
+use crate::redisconn::{DataProvider, SetIntFuture};
 
 pub(crate) struct RedisMock {
     pub is_connected: bool,
@@ -13,12 +13,7 @@ impl DataProvider for RedisMock {
         Box::pin(future::ready(self.is_connected))
     }
 
-    fn set_int<'a>(
-        &'a mut self,
-        _key: String,
-        _value: i64,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn Error + Send + Sync + 'static>>> + Send + 'a>>
-    {
+    fn set_int(&'_ mut self, _key: String, _value: i64) -> SetIntFuture {
         Box::pin(future::ready(Ok(())))
     }
 }
