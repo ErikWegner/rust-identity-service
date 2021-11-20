@@ -1,7 +1,8 @@
 mod redisconn;
 mod redismock;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use futures::lock::Mutex;
 
 use crate::redisconn::get_redis_connection;
 pub(crate) use dotenv::dotenv;
@@ -17,7 +18,7 @@ use rocket::{
 extern crate rocket;
 
 struct SharedRedis {
-    redis: Arc<Mutex<Box<dyn DataProvider>>>,
+    redis: Arc<futures::lock::Mutex<Box<dyn DataProvider>>>,
 }
 
 #[get("/up")]
@@ -26,13 +27,13 @@ fn up() -> &'static str {
 }
 
 #[get("/health")]
-fn health(
+async fn health(
     shared_con: &State<SharedRedis>,
 ) -> Result<&'static str, status::Custom<content::Json<&'static str>>> {
     // TODO: redis::ConnectionLike.check_connection()
     let lockable_redis = Arc::clone(&shared_con.redis);
-    let mut lock = lockable_redis.lock().expect("lock shared cache failed");
-    if !lock.check_connection() {
+    let mut lock = lockable_redis.lock().await;
+    if !(lock.check_connection().await) {
         return Err(status::Custom(
             Status::InternalServerError,
             content::Json("{\"message\": \"redis disconnected\"}"),
@@ -42,7 +43,7 @@ fn health(
 }
 
 #[get("/login?<client_id>&<state>")]
-fn login(
+async fn login(
     client_id: Option<String>,
     state: Option<String>,
     rc: &State<RuntimeConfiguration>,
@@ -55,9 +56,10 @@ fn login(
         ));
     }
     let lockable_redis = Arc::clone(&shared_con.redis);
-    let mut lock = lockable_redis.lock().expect("lock shared cache failed");
+    let mut lock = lockable_redis.lock().await;
     let _: () = lock
         .set_int("my_key".to_string(), 42)
+        .await
         .unwrap_or_else(|_| panic!("Could not write to cache."));
     Ok(Redirect::to(construct_redirect_uri(
         rc,
@@ -81,10 +83,10 @@ fn build_rocket_instance(rc: RuntimeConfiguration, conn: Box<dyn DataProvider>) 
 }
 
 #[launch]
-fn rocket() -> _ {
+async fn rocket() -> _ {
     dotenv().ok();
     let rc = init_openid_provider().unwrap();
-    let conn = get_redis_connection().unwrap();
+    let conn = get_redis_connection().await.expect("Redis failed");
     build_rocket_instance(rc, Box::new(conn))
 }
 
