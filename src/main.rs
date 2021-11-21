@@ -1,6 +1,8 @@
+mod oidcclient;
 mod redisconn;
 
 use futures::lock::Mutex;
+use oidcclient::{TokenData, get_auth_token};
 use std::sync::Arc;
 
 use crate::redisconn::get_redis_connection;
@@ -10,6 +12,7 @@ use ridser::{cfg::RuntimeConfiguration, construct_redirect_uri, init_openid_prov
 use rocket::{
     http::Status,
     response::{content, status, Redirect},
+    serde::json::Json,
     Build, Rocket, State,
 };
 
@@ -68,8 +71,9 @@ async fn login(
 }
 
 #[post("/callback")]
-fn callback() -> String {
-    String::from("not implemented yet")
+async fn callback() -> Json<TokenData> {
+    let t = get_auth_token().await;
+    Json(t)
 }
 
 fn build_rocket_instance(rc: RuntimeConfiguration, conn: Box<dyn DataProvider>) -> Rocket<Build> {
