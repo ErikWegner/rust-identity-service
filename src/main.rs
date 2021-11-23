@@ -2,7 +2,7 @@ mod oidcclient;
 mod redisconn;
 
 use futures::lock::Mutex;
-use oidcclient::{TokenData, get_auth_token};
+use oidcclient::{TokenData, get_auth_token_dep};
 use std::sync::Arc;
 
 use crate::redisconn::get_redis_connection;
@@ -72,7 +72,7 @@ async fn login(
 
 #[post("/callback")]
 async fn callback() -> Json<TokenData> {
-    let t = get_auth_token().await;
+    let t = get_auth_token_dep().await;
     Json(t)
 }
 
