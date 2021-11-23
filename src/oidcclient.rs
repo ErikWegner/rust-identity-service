@@ -1,5 +1,6 @@
 use std::marker::Send;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -33,10 +34,10 @@ trait AuthTokenFutureCallback {
         Self: Sized;
 }
 
-pub(crate) enum HolderState {
+pub(crate) enum HolderState<'a> {
     Empty,
     RequestPending {
-        request: Shared<Pin<Box<dyn Future<Output = TokenData> + Send>>>,
+        request: Shared<Pin<Box<dyn Future<Output = TokenData> + Send + 'a>>>,
     },
     HasToken {
         token: TokenData,
@@ -66,7 +67,7 @@ fn request_mutex_dep() -> &'static Mutex<Option<Shared<AuthTokenFuture>>> {
     INSTANCE.get_or_init(|| Mutex::new(Option::None))
 }
 
-fn request_mutex() -> &'static Mutex<Option<HolderState>> {
+fn request_mutex() -> &'static Mutex<Option<HolderState<'static>>> {
     static INSTANCE: OnceCell<Mutex<Option<HolderState>>> = OnceCell::new();
     INSTANCE.get_or_init(|| Mutex::new(Option::Some(HolderState::Empty)))
 }
@@ -117,17 +118,25 @@ pub(crate) fn get_auth_token_dep() -> AuthTokenFuture {
 }
 
 pub(crate) async fn get_auth_token<'a, F>(
-    state: &'a Mutex<Option<HolderState>>,
+    state: &'a Mutex<Option<HolderState<'a>>>,
     credential_provider: &dyn Fn(ClientCredentials) -> F,
 ) -> TokenData
 where
-    F: Future<Output = TokenData>,
+    F: Future<Output = TokenData> + Send + 'a,
 {
     let mut result_exists_check = state.lock().await;
     let r1 = result_exists_check.as_ref().unwrap();
     match r1 {
         HolderState::Empty => {
-            let _ = result_exists_check.insert(HolderState::Empty);
+            // TODO: use valid credentials
+            let client_credentials = ClientCredentials {
+                client_id: String::new(),
+                client_secret: String::new(),
+            };
+            let b = credential_provider(client_credentials).boxed();
+            let _ = result_exists_check.insert(HolderState::RequestPending {
+                request: b.shared(),
+            });
         }
         HolderState::RequestPending { request } => {}
         HolderState::HasToken { token } => {}
