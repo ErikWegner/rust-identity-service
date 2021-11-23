@@ -118,7 +118,7 @@ pub(crate) fn get_auth_token_dep() -> AuthTokenFuture {
 }
 
 pub(crate) async fn get_auth_token<'a, F>(
-    state: &'a Mutex<Option<HolderState<'a>>>,
+    state: &Mutex<Option<HolderState<'a>>>,
     credential_provider: &dyn Fn(ClientCredentials) -> F,
 ) -> TokenData
 where
