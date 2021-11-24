@@ -1,4 +1,3 @@
-use std::marker::Send;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -21,14 +20,8 @@ pub(crate) struct TokenData {
     pub expires: u64,
 }
 
-/*impl Copy for TokenData {
-    fn clone(&self) -> TokenData {
-        TokenData { token: self.token.clone(), expires: self.expires }
-    }
-
-}*/
-
 pub(crate) struct ClientCredentials {
+    pub token_url: String,
     pub client_id: String,
     pub client_secret: String,
 }
@@ -55,7 +48,7 @@ pub(crate) enum HolderState<'a> {
     },
 }
 
-async fn make_request_to_oidc_provider(_key: String) -> TokenData {
+async fn make_request_to_oidc_provider_dep(_key: String) -> TokenData {
     // Simulating a network request
     sleep(Duration::from_secs(2)).await;
 
@@ -69,12 +62,31 @@ async fn make_request_to_oidc_provider(_key: String) -> TokenData {
     }
 }
 
+pub(crate) fn make_request_to_oidc_provider(
+    client_credentials: ClientCredentials,
+) -> Pin<Box<dyn Future<Output = TokenData> + Send + Sync>> {
+    let body = ureq::get(client_credentials.token_url.as_str())
+        .call()
+        .unwrap()
+        .into_string()
+        .unwrap();
+
+    Box::pin(future::ready(TokenData {
+        token: body,
+        expires: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 30,
+    }))
+}
+
 fn request_mutex_dep() -> &'static Mutex<Option<Shared<AuthTokenFuture>>> {
     static INSTANCE: OnceCell<Mutex<Option<Shared<AuthTokenFuture>>>> = OnceCell::new();
     INSTANCE.get_or_init(|| Mutex::new(Option::None))
 }
 
-fn request_mutex() -> &'static Mutex<Option<HolderState<'static>>> {
+pub(crate) fn request_mutex() -> &'static Mutex<Option<HolderState<'static>>> {
     static INSTANCE: OnceCell<Mutex<Option<HolderState>>> = OnceCell::new();
     INSTANCE.get_or_init(|| Mutex::new(Option::Some(HolderState::Empty)))
 }
@@ -88,7 +100,7 @@ pub(crate) fn get_auth_token_dep() -> AuthTokenFuture {
         } else {
             // If no result is waiting, make a future and share it
             // for other request to wait for it.
-            let request = make_request_to_oidc_provider(String::new())
+            let request = make_request_to_oidc_provider_dep(String::new())
                 .boxed()
                 .shared();
             let _ = result_exists_check.insert(request.clone());
@@ -129,7 +141,7 @@ pub(crate) async fn get_auth_token<'a, F>(
     credential_provider: &dyn Fn(ClientCredentials) -> F,
 ) -> TokenData
 where
-    F: Future<Output = TokenData> + Send + 'a,
+    F: Future<Output = TokenData> + Sync + Send + 'a,
 {
     let mut result_exists_check = state.lock().await;
     let r1 = result_exists_check.as_ref().unwrap();
@@ -139,6 +151,7 @@ where
             let client_credentials = ClientCredentials {
                 client_id: String::new(),
                 client_secret: String::new(),
+                token_url: String::new(),
             };
             let b = credential_provider(client_credentials).boxed();
             let _ = result_exists_check.insert(HolderState::RequestPending {
@@ -160,8 +173,8 @@ where
 #[cfg(test)]
 fn mock_request_to_oidc_provider<'a>(
     delay_seconds: u16,
-    token_data: TokenData
-) -> Box<dyn Fn(ClientCredentials) -> Pin<Box<dyn Future<Output = TokenData> + Send + 'a>>> {
+    token_data: TokenData,
+) -> Box<dyn Fn(ClientCredentials) -> Pin<Box<dyn Future<Output = TokenData> + Sync + Send + 'a>>> {
     use std::thread;
 
     Box::new(move |_credentials| {
@@ -176,18 +189,22 @@ fn mock_request_to_oidc_provider<'a>(
 fn state_change_from_empty_to_request_pending() {
     // Arrange
     let state = Mutex::new(Option::Some(HolderState::Empty));
-    let callback = mock_request_to_oidc_provider(2, TokenData {
-        token: String::from("mockdata"),
-        expires: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            + 30,
-    });
+    let callback = mock_request_to_oidc_provider(
+        2,
+        TokenData {
+            token: String::from("mockdata"),
+            expires: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 30,
+        },
+    );
     let fut = get_auth_token(&state, &callback);
     let client_credentials = ClientCredentials {
         client_id: String::new(),
         client_secret: String::new(),
+        token_url: String::new(),
     };
 
     // Act
@@ -208,18 +225,22 @@ fn state_change_from_empty_to_request_pending() {
 fn state_change_from_request_pending_to_has_token() {
     // Arrange
     let state = Mutex::new(Option::Some(HolderState::Empty));
-    let callback = mock_request_to_oidc_provider(0, TokenData {
-        token: String::from("mockdata"),
-        expires: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            + 30,
-    });
+    let callback = mock_request_to_oidc_provider(
+        0,
+        TokenData {
+            token: String::from("mockdata"),
+            expires: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 30,
+        },
+    );
     let fut = get_auth_token(&state, &callback);
     let client_credentials = ClientCredentials {
         client_id: String::new(),
         client_secret: String::new(),
+        token_url: String::new(),
     };
 
     // Act
