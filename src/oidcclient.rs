@@ -21,6 +21,13 @@ pub(crate) struct TokenData {
     pub expires: u64,
 }
 
+/*impl Copy for TokenData {
+    fn clone(&self) -> TokenData {
+        TokenData { token: self.token.clone(), expires: self.expires }
+    }
+
+}*/
+
 pub(crate) struct ClientCredentials {
     pub client_id: String,
     pub client_secret: String,
@@ -151,25 +158,32 @@ where
 }
 
 #[cfg(test)]
-async fn mock_request_to_oidc_provider(credentials: ClientCredentials) -> TokenData {
-    // Simulating a network request
-    sleep(Duration::from_secs(2)).await;
+fn mock_request_to_oidc_provider<'a>(
+    delay_seconds: u16,
+    token_data: TokenData
+) -> Box<dyn Fn(ClientCredentials) -> Pin<Box<dyn Future<Output = TokenData> + Send + 'a>>> {
+    use std::thread;
 
-    TokenData {
-        token: String::from("mockdata"),
-        expires: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            + 30,
-    }
+    Box::new(move |_credentials| {
+        // Simulating a network request
+        thread::sleep(Duration::from_secs(delay_seconds.into()));
+
+        Box::pin(future::ready(token_data.clone()))
+    })
 }
 
 #[test]
 fn state_change_from_empty_to_request_pending() {
     // Arrange
     let state = Mutex::new(Option::Some(HolderState::Empty));
-    let callback = mock_request_to_oidc_provider;
+    let callback = mock_request_to_oidc_provider(2, TokenData {
+        token: String::from("mockdata"),
+        expires: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 30,
+    });
     let fut = get_auth_token(&state, &callback);
     let client_credentials = ClientCredentials {
         client_id: String::new(),
@@ -186,6 +200,41 @@ fn state_change_from_empty_to_request_pending() {
         std::mem::discriminant(guard.as_ref().unwrap()),
         std::mem::discriminant(&HolderState::RequestPending {
             request: Shared::boxed(callback(client_credentials).shared()).shared()
+        })
+    );
+}
+
+#[test]
+fn state_change_from_request_pending_to_has_token() {
+    // Arrange
+    let state = Mutex::new(Option::Some(HolderState::Empty));
+    let callback = mock_request_to_oidc_provider(0, TokenData {
+        token: String::from("mockdata"),
+        expires: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 30,
+    });
+    let fut = get_auth_token(&state, &callback);
+    let client_credentials = ClientCredentials {
+        client_id: String::new(),
+        client_secret: String::new(),
+    };
+
+    // Act
+    let result = block_on(fut);
+
+    // Assert
+    assert_eq!(result.expires, 0);
+    let guard = block_on(state.lock());
+    assert_eq!(
+        std::mem::discriminant(guard.as_ref().unwrap()),
+        std::mem::discriminant(&HolderState::HasToken {
+            token: TokenData {
+                token: String::new(),
+                expires: 0
+            }
         })
     );
 }
