@@ -978,6 +978,7 @@ dependencies = [
  "hmac",
  "jwt",
  "once_cell",
+ "parking_lot",
  "redis",
  "rocket",
  "serde",

@@ -81,6 +81,8 @@ async fn callback() -> Json<TokenData> {
     let mutex = request_mutex();
     let callback= make_request_to_oidc_provider;
     let t = get_auth_token(mutex, &callback).await;
+    
+
     Json(t)
 }
 

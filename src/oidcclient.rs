@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -8,11 +9,9 @@ use futures::future::Shared;
 use futures::prelude::*;
 use futures::Future;
 use once_cell::sync::OnceCell;
+use parking_lot::{Mutex, Condvar};
 use serde::Serialize;
-use tokio::{
-    sync::Mutex,
-    time::{sleep, Duration},
-};
+use tokio::time::{sleep, Duration};
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct TokenData {
@@ -34,18 +33,26 @@ trait AuthTokenFutureCallback {
         Self: Sized;
 }
 
-pub(crate) enum HolderState<'a> {
+pub(crate) enum HolderState {
     Empty,
-    RequestPending {
-        request: Shared<Pin<Box<dyn Future<Output = TokenData> + Send + 'a>>>,
-    },
+    RequestPending,
     HasToken {
         token: TokenData,
     },
     HasTokenIsRefreshing {
-        request: Shared<Pin<Box<dyn Future<Output = TokenData> + Send>>>,
         token: TokenData,
     },
+}
+
+impl HolderState {
+    fn getToken(&self) -> Option<TokenData> {
+        match self {
+            HolderState::Empty => Option::None,
+            HolderState::RequestPending => Option::None,
+            HolderState::HasToken { token } => Some(token.clone()),
+            HolderState::HasTokenIsRefreshing { token } => Some(token.clone()),
+        }
+    }
 }
 
 async fn make_request_to_oidc_provider_dep(_key: String) -> TokenData {
@@ -86,9 +93,8 @@ fn request_mutex_dep() -> &'static Mutex<Option<Shared<AuthTokenFuture>>> {
     INSTANCE.get_or_init(|| Mutex::new(Option::None))
 }
 
-pub(crate) fn request_mutex() -> &'static Mutex<Option<HolderState<'static>>> {
-    static INSTANCE: OnceCell<Mutex<Option<HolderState>>> = OnceCell::new();
-    INSTANCE.get_or_init(|| Mutex::new(Option::Some(HolderState::Empty)))
+pub(crate) fn request_mutex() -> Arc<(Mutex<HolderState>, Condvar)> {
+    Arc::new((Mutex::new(HolderState::Empty), Condvar::new()))
 }
 
 pub(crate) fn get_auth_token_dep() -> AuthTokenFuture {
@@ -136,16 +142,14 @@ pub(crate) fn get_auth_token_dep() -> AuthTokenFuture {
     })
 }
 
-pub(crate) async fn get_auth_token<'a, F>(
-    state: &Mutex<Option<HolderState<'a>>>,
-    credential_provider: &dyn Fn(ClientCredentials) -> F,
-) -> TokenData
-where
-    F: Future<Output = TokenData> + Sync + Send + 'a,
+pub(crate) async fn get_auth_token(
+    a: Arc<(Mutex<HolderState>, Condvar)>,
+) -> Result<TokenData, &'static str>
 {
-    let mut result_exists_check = state.lock().await;
-    let r1 = result_exists_check.as_ref().unwrap();
-    match r1 {
+    let &(ref lock, ref cvar) = &*a;
+    let mut state = lock.lock();
+
+    match *state {
         HolderState::Empty => {
             // TODO: use valid credentials
             let client_credentials = ClientCredentials {
@@ -153,21 +157,17 @@ where
                 client_secret: String::new(),
                 token_url: String::new(),
             };
-            let b = credential_provider(client_credentials).boxed();
-            let _ = result_exists_check.insert(HolderState::RequestPending {
-                request: b.shared(),
-            });
+            cvar.wait(&mut state);
+            let token = state.getToken();
+            return token.ok_or("Authentication failed")
         }
-        HolderState::RequestPending { request } => {}
+        HolderState::RequestPending {  } => {}
         HolderState::HasToken { token } => {}
-        HolderState::HasTokenIsRefreshing { request, token } => {}
+        HolderState::HasTokenIsRefreshing { token } => {}
     }
 
     // TODO: remove
-    TokenData {
-        expires: 0,
-        token: String::new(),
-    }
+    Err("Not implemented")
 }
 
 #[cfg(test)]
