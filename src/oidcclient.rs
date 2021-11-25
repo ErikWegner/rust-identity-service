@@ -1,15 +1,18 @@
 use std::error::Error;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::thread;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use crossbeam::channel::Sender;
+use crossbeam::channel::unbounded;
 use futures::executor::block_on;
 use futures::future::Shared;
 use futures::prelude::*;
 use futures::Future;
 use once_cell::sync::OnceCell;
-use parking_lot::{Mutex, Condvar};
+use parking_lot::{Condvar, Mutex};
 use serde::Serialize;
 use tokio::time::{sleep, Duration};
 
@@ -36,12 +39,8 @@ trait AuthTokenFutureCallback {
 pub(crate) enum HolderState {
     Empty,
     RequestPending,
-    HasToken {
-        token: TokenData,
-    },
-    HasTokenIsRefreshing {
-        token: TokenData,
-    },
+    HasToken { token: TokenData },
+    HasTokenIsRefreshing { token: TokenData },
 }
 
 impl HolderState {
@@ -88,9 +87,10 @@ pub(crate) fn make_request_to_oidc_provider(
     }))
 }
 
-fn request_mutex_dep() -> &'static Mutex<Option<Shared<AuthTokenFuture>>> {
-    static INSTANCE: OnceCell<Mutex<Option<Shared<AuthTokenFuture>>>> = OnceCell::new();
-    INSTANCE.get_or_init(|| Mutex::new(Option::None))
+fn request_mutex_dep() -> &'static tokio::sync::Mutex<Option<Shared<AuthTokenFuture>>> {
+    static INSTANCE: OnceCell<tokio::sync::Mutex<Option<Shared<AuthTokenFuture>>>> =
+        OnceCell::new();
+    INSTANCE.get_or_init(|| tokio::sync::Mutex::new(Option::None))
 }
 
 pub(crate) fn request_mutex() -> Arc<(Mutex<HolderState>, Condvar)> {
@@ -144,12 +144,12 @@ pub(crate) fn get_auth_token_dep() -> AuthTokenFuture {
 
 pub(crate) async fn get_auth_token(
     a: Arc<(Mutex<HolderState>, Condvar)>,
-) -> Result<TokenData, &'static str>
-{
+    tx: Sender<u8>,
+) -> Result<TokenData, &'static str> {
     let &(ref lock, ref cvar) = &*a;
     let mut state = lock.lock();
 
-    match *state {
+    match &*state {
         HolderState::Empty => {
             // TODO: use valid credentials
             let client_credentials = ClientCredentials {
@@ -157,11 +157,12 @@ pub(crate) async fn get_auth_token(
                 client_secret: String::new(),
                 token_url: String::new(),
             };
+            tx.send(1);
             cvar.wait(&mut state);
             let token = state.getToken();
-            return token.ok_or("Authentication failed")
+            return token.ok_or("Authentication failed");
         }
-        HolderState::RequestPending {  } => {}
+        HolderState::RequestPending {} => {}
         HolderState::HasToken { token } => {}
         HolderState::HasTokenIsRefreshing { token } => {}
     }
@@ -175,8 +176,6 @@ fn mock_request_to_oidc_provider<'a>(
     delay_seconds: u16,
     token_data: TokenData,
 ) -> Box<dyn Fn(ClientCredentials) -> Pin<Box<dyn Future<Output = TokenData> + Sync + Send + 'a>>> {
-    use std::thread;
-
     Box::new(move |_credentials| {
         // Simulating a network request
         thread::sleep(Duration::from_secs(delay_seconds.into()));
@@ -188,74 +187,16 @@ fn mock_request_to_oidc_provider<'a>(
 #[test]
 fn state_change_from_empty_to_request_pending() {
     // Arrange
-    let state = Mutex::new(Option::Some(HolderState::Empty));
-    let callback = mock_request_to_oidc_provider(
-        2,
-        TokenData {
-            token: String::from("mockdata"),
-            expires: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                + 30,
-        },
-    );
-    let fut = get_auth_token(&state, &callback);
-    let client_credentials = ClientCredentials {
-        client_id: String::new(),
-        client_secret: String::new(),
-        token_url: String::new(),
-    };
+    let state = request_mutex();
+    let (s, r) = unbounded();
+    let fut = get_auth_token(state.clone(), s);
 
     // Act
-    let result = block_on(fut);
-
+    let th = thread::spawn(move || {
+        let result = block_on(fut);
+        result
+    });
     // Assert
-    assert_eq!(result.expires, 0);
-    let guard = block_on(state.lock());
-    assert_eq!(
-        std::mem::discriminant(guard.as_ref().unwrap()),
-        std::mem::discriminant(&HolderState::RequestPending {
-            request: Shared::boxed(callback(client_credentials).shared()).shared()
-        })
-    );
-}
-
-#[test]
-fn state_change_from_request_pending_to_has_token() {
-    // Arrange
-    let state = Mutex::new(Option::Some(HolderState::Empty));
-    let callback = mock_request_to_oidc_provider(
-        0,
-        TokenData {
-            token: String::from("mockdata"),
-            expires: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                + 30,
-        },
-    );
-    let fut = get_auth_token(&state, &callback);
-    let client_credentials = ClientCredentials {
-        client_id: String::new(),
-        client_secret: String::new(),
-        token_url: String::new(),
-    };
-
-    // Act
-    let result = block_on(fut);
-
-    // Assert
-    assert_eq!(result.expires, 0);
-    let guard = block_on(state.lock());
-    assert_eq!(
-        std::mem::discriminant(guard.as_ref().unwrap()),
-        std::mem::discriminant(&HolderState::HasToken {
-            token: TokenData {
-                token: String::new(),
-                expires: 0
-            }
-        })
-    );
+    let result = th.join().expect("No thread result");
+    assert_eq!(result.unwrap().expires, 0);
 }

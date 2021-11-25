@@ -1,6 +1,7 @@
 mod oidcclient;
 mod redisconn;
 
+use crossbeam::channel::unbounded;
 use futures::lock::Mutex;
 use oidcclient::{TokenData, get_auth_token, get_auth_token_dep, make_request_to_oidc_provider, request_mutex};
 use std::sync::Arc;
@@ -80,10 +81,11 @@ async fn callback_dep() -> Json<TokenData> {
 async fn callback() -> Json<TokenData> {
     let mutex = request_mutex();
     let callback= make_request_to_oidc_provider;
-    let t = get_auth_token(mutex, &callback).await;
+    let (s, r) = unbounded();
+    let t = get_auth_token(mutex, s).await;
     
 
-    Json(t)
+    Json(t.unwrap())
 }
 
 fn build_rocket_instance(rc: RuntimeConfiguration, conn: Box<dyn DataProvider>) -> Rocket<Build> {

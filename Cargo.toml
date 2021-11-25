@@ -8,6 +8,7 @@ edition = "2021"
 path = "./src/lib/lib.rs"
 
 [dependencies]
+crossbeam = "0.8.1"
 dotenv = "0.15.0"
 futures = "0.3.17"
 hmac = "0.11"
