@@ -147,7 +147,10 @@ pub(crate) async fn get_auth_token(
     tx: Sender<u8>,
 ) -> Result<TokenData, &'static str> {
     let &(ref lock, ref cvar) = &*a;
+    println!("get_auth_token/lock");
     let mut state = lock.lock();
+
+    println!("get_auth_token/match");
 
     match &*state {
         HolderState::Empty => {
@@ -168,7 +171,7 @@ pub(crate) async fn get_auth_token(
     }
 
     // TODO: remove
-    Err("Not implemented")
+    Err("It should never reach this point")
 }
 
 #[cfg(test)]
@@ -198,15 +201,15 @@ fn state_change_from_empty_to_request_pending() {
         block_on(get_auth_token(closure_state, closure_s))
     });
     
-    let _receive = t.try_recv();
+    let _receive = t.recv_timeout(Duration::from_secs(2));
     let &(ref lock, ref cvar) = &*state;
     let mut teststate = lock.lock();
     *teststate = HolderState::HasToken { token: TokenData { token: String::from("ABC"), expires: 43 }};
-    thread::yield_now();
     println!("notify_all");
     cvar.notify_all();
+    drop(teststate);
 
     // Assert    
     let result = th.join().expect("No thread result");
-    assert_eq!(result.unwrap().expires, 0);
+    assert_eq!(result.unwrap().expires, 43);
 }
