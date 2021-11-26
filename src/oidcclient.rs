@@ -1,13 +1,10 @@
-use std::error::Error;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::thread;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use crossbeam::channel::Sender;
 use crossbeam::channel::unbounded;
-use futures::executor::block_on;
+use crossbeam::channel::Sender;
 use futures::future::Shared;
 use futures::prelude::*;
 use futures::Future;
@@ -44,7 +41,7 @@ pub(crate) enum HolderState {
 }
 
 impl HolderState {
-    fn getToken(&self) -> Option<TokenData> {
+    fn get_token(&self) -> Option<TokenData> {
         match self {
             HolderState::Empty => Option::None,
             HolderState::RequestPending => Option::None,
@@ -159,11 +156,11 @@ pub(crate) async fn get_auth_token(
             };
             let _r = tx.send(1);
             cvar.wait(&mut state);
-            let token = state.getToken();
+            let token = state.get_token();
             return token.ok_or("Authentication failed");
         }
         HolderState::RequestPending {} => {}
-        HolderState::HasToken { token } => { return Ok(token.clone()) }
+        HolderState::HasToken { token } => return Ok(token.clone()),
         HolderState::HasTokenIsRefreshing { token: _token } => {}
     }
 
@@ -172,78 +169,142 @@ pub(crate) async fn get_auth_token(
 }
 
 #[cfg(test)]
-fn mock_request_to_oidc_provider<'a>(
-    delay_seconds: u16,
-    token_data: TokenData,
-) -> Box<dyn Fn(ClientCredentials) -> Pin<Box<dyn Future<Output = TokenData> + Sync + Send + 'a>>> {
-    Box::new(move |_credentials| {
-        // Simulating a network request
-        thread::sleep(Duration::from_secs(delay_seconds.into()));
+mod tests {
+    use futures::executor::block_on;
 
-        Box::pin(future::ready(token_data.clone()))
-    })
-}
+    use std::thread;
 
-#[test]
-fn state_change_from_empty_to_request_pending() {
-    // Arrange
-    let state = request_mutex();
-    let (s, t) = unbounded();
-    let closure_state = state.clone();
-    let closure_s = s;
+    use super::*;
 
-    let th = thread::spawn(move || -> Result<TokenData, &str> {
-        println!("block_on(get_auth_token)");
-        block_on(get_auth_token(closure_state, closure_s))
-    });
-    
-    let _receive = t.recv_timeout(Duration::from_secs(2));
-    let &(ref lock, ref cvar) = &*state;
-    let mut teststate = lock.lock();
+    fn provide_token_and_notify(mutex: Arc<(Mutex<HolderState>, Condvar)>, token: TokenData) {
+        let &(ref lock, ref cvar) = &*mutex;
+        let mut state = lock.lock();
+        *state = HolderState::HasToken { token };
+        cvar.notify_all();
+        drop(state);
+    }
 
-    // Act
-    *teststate = HolderState::HasToken { token: TokenData { token: String::from("ABC"), expires: 43 }};
-    println!("notify_all");
-    cvar.notify_all();
-    drop(teststate);
+    fn set_state_to_empty(mutex: Arc<(Mutex<HolderState>, Condvar)>) {
+        let &(ref lock, ref cvar) = &*mutex;
+        let mut state = lock.lock();
+        *state = HolderState::Empty;
+        cvar.notify_all();
+        drop(state);
+    }
 
-    // Assert    
-    let result = th.join().expect("No thread result");
-    assert_eq!(result.unwrap().expires, 43);
-}
+    #[test]
+    fn state_change_from_empty_to_request_pending() {
+        // Arrange
+        let state = request_mutex();
+        let (s, t) = unbounded();
+        let closure_state = state.clone();
+        let closure_s = s;
 
-#[test]
-fn state_change_from_empty_to_request_pending_for_parallel_requests() {
-    // Arrange
-    let state = request_mutex();
-    let (s, t) = unbounded();
-    let closure1_state = state.clone();
-    let closure2_state = state.clone();
-    let closure1_s = s.clone();
-    let closure2_s = s;
+        let th = thread::spawn(move || -> Result<TokenData, &str> {
+            println!("block_on(get_auth_token)");
+            block_on(get_auth_token(closure_state, closure_s))
+        });
 
-    let th1 = thread::spawn(move || -> Result<TokenData, &str> {
-        println!("block_on1");
-        block_on(get_auth_token(closure1_state, closure1_s))
-    });
-    let th2 = thread::spawn(move || -> Result<TokenData, &str> {
-        println!("block_on2");
-        block_on(get_auth_token(closure2_state, closure2_s))
-    });
-    
-    let _receive = t.recv_timeout(Duration::from_secs(2));
-    let &(ref lock, ref cvar) = &*state;
-    let mut teststate = lock.lock();
+        let _receive = t.recv_timeout(Duration::from_secs(2));
+        provide_token_and_notify(
+            state,
+            TokenData {
+                token: String::from("ABC"),
+                expires: 43,
+            },
+        );
 
-    // Act
-    *teststate = HolderState::HasToken { token: TokenData { token: String::from("ABC"), expires: 43 }};
-    println!("notify_all");
-    cvar.notify_all();
-    drop(teststate);
+        // Assert
+        let result = th.join().expect("No thread result");
+        assert_eq!(result.unwrap().expires, 43);
+    }
 
-    // Assert    
-    let result1 = th1.join().expect("No thread 1 result");
-    let result2 = th2.join().expect("No thread 2 result");
-    assert_eq!(result1.unwrap().expires, 43);
-    assert_eq!(result2.unwrap().expires, 43);
+    #[test]
+    fn state_change_from_empty_to_request_pending_for_parallel_requests() {
+        // Arrange
+        let state = request_mutex();
+        let (s, t) = unbounded();
+        let closure1_state = state.clone();
+        let closure2_state = state.clone();
+        let closure1_s = s.clone();
+        let closure2_s = s;
+
+        let th1 = thread::spawn(move || -> Result<TokenData, &str> {
+            println!("block_on1");
+            block_on(get_auth_token(closure1_state, closure1_s))
+        });
+        let th2 = thread::spawn(move || -> Result<TokenData, &str> {
+            println!("block_on2");
+            block_on(get_auth_token(closure2_state, closure2_s))
+        });
+
+        let _receive_th1 = t.recv_timeout(Duration::from_secs(2));
+        let _receive_th2 = t.recv_timeout(Duration::from_secs(2));
+
+        // Act
+        provide_token_and_notify(
+            state,
+            TokenData {
+                token: String::from("ABC"),
+                expires: 43,
+            },
+        );
+
+        // Assert
+        let result1 = th1.join().expect("No thread 1 result");
+        let result2 = th2.join().expect("No thread 2 result");
+        assert_eq!(result1.unwrap().expires, 43);
+        assert_eq!(result2.unwrap().expires, 43);
+    }
+
+    #[test]
+    fn can_reuse_condvar() {
+        // Arrange
+        let state = request_mutex();
+        let (s, t) = unbounded();
+        let closure1_state = state.clone();
+        let closure2_state = state.clone();
+        let closure1_s = s.clone();
+        let closure2_s = s;
+        let state1_clone = state.clone();
+        let state2_clone = state.clone();
+
+        let th = thread::spawn(move || -> Result<TokenData, &str> {
+            println!("block_on(get_auth_token)");
+            block_on(get_auth_token(closure1_state, closure1_s))
+        });
+
+        let _receive = t.recv_timeout(Duration::from_secs(2));
+
+        provide_token_and_notify(
+            state1_clone,
+            TokenData {
+                token: String::from("ABC"),
+                expires: 43,
+            },
+        );
+
+        let result = th.join().expect("No thread result");
+        assert_eq!(result.unwrap().expires, 43);
+
+        set_state_to_empty(state2_clone);
+
+        let th = thread::spawn(move || -> Result<TokenData, &str> {
+            println!("block_on(get_auth_token)");
+            block_on(get_auth_token(closure2_state, closure2_s))
+        });
+
+        let _receive = t.recv_timeout(Duration::from_secs(2));
+
+        provide_token_and_notify(
+            state,
+            TokenData {
+                token: String::from("ABC"),
+                expires: 43,
+            },
+        );
+
+        let result = th.join().expect("No thread result");
+        assert_eq!(result.unwrap().expires, 43);
+    }
 }
