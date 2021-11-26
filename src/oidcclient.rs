@@ -148,6 +148,7 @@ pub(crate) async fn get_auth_token(
 
     match &*state {
         HolderState::Empty => {
+            println!("HolderState::Empty");
             // TODO: use valid credentials
             let _client_credentials = ClientCredentials {
                 client_id: String::new(),
@@ -159,8 +160,16 @@ pub(crate) async fn get_auth_token(
             let token = state.get_token();
             return token.ok_or("Authentication failed");
         }
-        HolderState::RequestPending {} => {}
-        HolderState::HasToken { token } => return Ok(token.clone()),
+        HolderState::RequestPending {} => {
+            println!("HolderState::RequestPending");
+            cvar.wait(&mut state);
+            let token = state.get_token();
+            return token.ok_or("Authentication failed");
+        }
+        HolderState::HasToken { token } => {
+            println!("HolderState::HasToken");
+            return Ok(token.clone());
+        }
         HolderState::HasTokenIsRefreshing { token: _token } => {}
     }
 
@@ -192,8 +201,16 @@ mod tests {
         drop(state);
     }
 
+    fn set_state_to_request_pending(mutex: Arc<(Mutex<HolderState>, Condvar)>) {
+        let &(ref lock, ref cvar) = &*mutex;
+        let mut state = lock.lock();
+        *state = HolderState::RequestPending;
+        cvar.notify_all();
+        drop(state);
+    }
+
     #[test]
-    fn state_change_from_empty_to_request_pending() {
+    fn state_change_from_empty_to_has_token() {
         // Arrange
         let state = request_mutex();
         let (s, t) = unbounded();
@@ -205,6 +222,7 @@ mod tests {
             block_on(get_auth_token(closure_state, closure_s))
         });
 
+        // Act
         let _receive = t.recv_timeout(Duration::from_secs(2));
         provide_token_and_notify(
             state,
@@ -220,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn state_change_from_empty_to_request_pending_for_parallel_requests() {
+    fn state_change_from_empty_to_has_token_for_parallel_requests() {
         // Arrange
         let state = request_mutex();
         let (s, t) = unbounded();
@@ -255,6 +273,36 @@ mod tests {
         let result2 = th2.join().expect("No thread 2 result");
         assert_eq!(result1.unwrap().expires, 43);
         assert_eq!(result2.unwrap().expires, 43);
+    }
+
+    #[test]
+    fn state_change_from_pending_to_has_token() {
+        // Arrange
+        let state = request_mutex();
+        let (s, t) = unbounded();
+        let closure_state = state.clone();
+        let closure_s = s;
+        set_state_to_request_pending(state.clone());
+
+        let th = thread::spawn(move || -> Result<TokenData, &str> {
+            println!("block_on(get_auth_token)");
+            block_on(get_auth_token(closure_state, closure_s))
+        });
+
+        // Act
+        let receive = t.recv_timeout(Duration::from_secs(2));
+        provide_token_and_notify(
+            state,
+            TokenData {
+                token: String::from("ABC"),
+                expires: 237,
+            },
+        );
+
+        // Assert
+        let result = th.join().expect("No thread result");
+        assert_eq!(result.unwrap().expires, 237);
+        assert!(receive.is_err())
     }
 
     #[test]
