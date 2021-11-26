@@ -158,13 +158,13 @@ pub(crate) async fn get_auth_token(
             let _r = tx.send(1);
             cvar.wait(&mut state);
             let token = state.get_token();
-            return token.ok_or("Authentication failed");
+            token.ok_or("Authentication failed")
         }
         HolderState::RequestPending {} => {
             println!("HolderState::RequestPending");
             cvar.wait(&mut state);
             let token = state.get_token();
-            return token.ok_or("Authentication failed");
+            token.ok_or("Authentication failed")
         }
         HolderState::HasToken { token } => {
             println!("HolderState::HasToken");
@@ -176,13 +176,10 @@ pub(crate) async fn get_auth_token(
             if token.expires < now_seconds + 5 {
                 let _r = tx.send(1);
             }
-            return Ok(token.clone());
+            Ok(token.clone())
         }
-        HolderState::HasTokenIsRefreshing { token } => return Ok(token.clone()),
+        HolderState::HasTokenIsRefreshing { token } => Ok(token.clone()),
     }
-
-    // TODO: remove
-    Err("It should never reach this point")
 }
 
 #[cfg(test)]
@@ -371,7 +368,7 @@ mod tests {
                 .as_secs()
                 + 3,
         };
-        set_state_to_has_token_is_refreshing(state.clone(), nearly_expired_token);
+        set_state_to_has_token_is_refreshing(state, nearly_expired_token);
 
         let th = thread::spawn(move || -> Result<TokenData, &str> {
             println!("block_on(get_auth_token)");
