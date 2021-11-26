@@ -152,19 +152,19 @@ pub(crate) async fn get_auth_token(
     match &*state {
         HolderState::Empty => {
             // TODO: use valid credentials
-            let client_credentials = ClientCredentials {
+            let _client_credentials = ClientCredentials {
                 client_id: String::new(),
                 client_secret: String::new(),
                 token_url: String::new(),
             };
-            tx.send(1);
+            let _r = tx.send(1);
             cvar.wait(&mut state);
             let token = state.getToken();
             return token.ok_or("Authentication failed");
         }
         HolderState::RequestPending {} => {}
-        HolderState::HasToken { token } => {}
-        HolderState::HasTokenIsRefreshing { token } => {}
+        HolderState::HasToken { token: _token } => {}
+        HolderState::HasTokenIsRefreshing { token: _token } => {}
     }
 
     // TODO: remove
@@ -188,15 +188,25 @@ fn mock_request_to_oidc_provider<'a>(
 fn state_change_from_empty_to_request_pending() {
     // Arrange
     let state = request_mutex();
-    let (s, r) = unbounded();
-    let fut = get_auth_token(state.clone(), s);
+    let (s, t) = unbounded();
+    let closure_state = state.clone();
+    let closure_s = s;
 
     // Act
-    let th = thread::spawn(move || {
-        let result = block_on(fut);
-        result
+    let th = thread::spawn(move || -> Result<TokenData, &str> {
+        println!("block_on(get_auth_token)");
+        block_on(get_auth_token(closure_state, closure_s))
     });
-    // Assert
+    
+    let _receive = t.try_recv();
+    let &(ref lock, ref cvar) = &*state;
+    let mut teststate = lock.lock();
+    *teststate = HolderState::HasToken { token: TokenData { token: String::from("ABC"), expires: 43 }};
+    thread::yield_now();
+    println!("notify_all");
+    cvar.notify_all();
+
+    // Assert    
     let result = th.join().expect("No thread result");
     assert_eq!(result.unwrap().expires, 0);
 }
