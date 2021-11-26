@@ -13,7 +13,13 @@ services:
     image: redis:6.2.6-alpine
 
   keycloak:
-    image: bitnami/keycloak:15.0.2
+    image: jboss/keycloak:15.0.2
     ports:
-      - "8100:8080"
+#      - "8100:8080"
       - "8101:8443"
+    environment:
+      - KEYCLOAK_USER=admin
+      - KEYCLOAK_PASSWORD=admin
+      - KEYCLOAK_IMPORT=/tmp/dev_realm.json
+    volumes:
+      - ./dev_realm.json:/tmp/dev_realm.json
