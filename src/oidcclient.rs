@@ -178,7 +178,7 @@ pub(crate) async fn get_auth_token(
             }
             return Ok(token.clone());
         }
-        HolderState::HasTokenIsRefreshing { token: _token } => {}
+        HolderState::HasTokenIsRefreshing { token } => return Ok(token.clone()),
     }
 
     // TODO: remove
@@ -213,6 +213,17 @@ mod tests {
         let &(ref lock, ref cvar) = &*mutex;
         let mut state = lock.lock();
         *state = HolderState::RequestPending;
+        cvar.notify_all();
+        drop(state);
+    }
+
+    fn set_state_to_has_token_is_refreshing(
+        mutex: Arc<(Mutex<HolderState>, Condvar)>,
+        token: TokenData,
+    ) {
+        let &(ref lock, ref cvar) = &*mutex;
+        let mut state = lock.lock();
+        *state = HolderState::HasTokenIsRefreshing { token };
         cvar.notify_all();
         drop(state);
     }
@@ -265,8 +276,8 @@ mod tests {
             block_on(get_auth_token(closure2_state, closure2_s))
         });
 
-        let receive_th1 = t.recv_timeout(Duration::from_secs(2));
-        let receive_th2 = t.recv_timeout(Duration::from_secs(2));
+        let _receive_th1 = t.recv_timeout(Duration::from_secs(2));
+        let _receive_th2 = t.recv_timeout(Duration::from_secs(2));
 
         // Act
         provide_token_and_notify(
@@ -329,7 +340,7 @@ mod tests {
                 .as_secs()
                 + 3,
         };
-        provide_token_and_notify(state.clone(), nearly_expired_token);
+        provide_token_and_notify(state, nearly_expired_token);
 
         let th = thread::spawn(move || -> Result<TokenData, &str> {
             println!("block_on(get_auth_token)");
@@ -338,18 +349,42 @@ mod tests {
 
         // Act
         let receive = t.recv_timeout(Duration::from_secs(2));
-        provide_token_and_notify(
-            state,
-            TokenData {
-                token: String::from("future_token"),
-                expires: 164567,
-            },
-        );
 
         // Assert
         let result = th.join().expect("No thread result");
         assert_eq!(result.unwrap().token, "nearly_expired_token");
         assert!(receive.is_ok());
+    }
+
+    #[test]
+    fn provide_token_while_refreshing() {
+        // Arrange
+        let state = request_mutex();
+        let (s, t) = unbounded();
+        let closure_state = state.clone();
+        let closure_s = s;
+        let nearly_expired_token = TokenData {
+            token: String::from("nearly_expired_token"),
+            expires: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 3,
+        };
+        set_state_to_has_token_is_refreshing(state.clone(), nearly_expired_token);
+
+        let th = thread::spawn(move || -> Result<TokenData, &str> {
+            println!("block_on(get_auth_token)");
+            block_on(get_auth_token(closure_state, closure_s))
+        });
+
+        // Act
+        let receive = t.recv_timeout(Duration::from_secs(2));
+
+        // Assert
+        let result = th.join().expect("No thread result");
+        assert_eq!(result.unwrap().token, "nearly_expired_token");
+        assert!(receive.is_err());
     }
 
     #[test]
