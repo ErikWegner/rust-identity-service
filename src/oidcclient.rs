@@ -20,7 +20,8 @@ pub struct TokenData {
     pub expires: u64,
 }
 
-pub(crate) struct ClientCredentials {
+#[derive(Clone)]
+pub struct ClientCredentials {
     pub token_url: String,
     pub client_id: String,
     pub client_secret: String,
@@ -34,6 +35,7 @@ trait AuthTokenFutureCallback {
         Self: Sized;
 }
 
+#[derive(Clone)]
 pub enum HolderState {
     Empty,
     RequestPending,
@@ -68,21 +70,21 @@ async fn make_request_to_oidc_provider_dep(_key: String) -> TokenData {
 
 pub(crate) fn make_request_to_oidc_provider(
     client_credentials: ClientCredentials,
-) -> Pin<Box<dyn Future<Output = TokenData> + Send + Sync>> {
+) -> Result<TokenData, &'static str> {
     let body = ureq::get(client_credentials.token_url.as_str())
         .call()
         .unwrap()
         .into_string()
         .unwrap();
 
-    Box::pin(future::ready(TokenData {
+    Ok(TokenData {
         token: body,
         expires: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs()
             + 30,
-    }))
+    })
 }
 
 fn request_mutex_dep() -> &'static tokio::sync::Mutex<Option<Shared<AuthTokenFuture>>> {

@@ -1,13 +1,13 @@
 mod oidcclient;
 mod redisconn;
 
-use crossbeam::channel::{unbounded, Sender};
+use crossbeam::channel::{unbounded, Receiver, Sender};
 use oidcclient::{
-    get_auth_token, get_auth_token_dep, make_request_to_oidc_provider, request_mutex, HolderState,
-    TokenData,
+    get_auth_token, get_auth_token_dep, make_request_to_oidc_provider, request_mutex,
+    ClientCredentials, HolderState, TokenData,
 };
 use parking_lot::{Condvar, Mutex};
-use std::sync::Arc;
+use std::{sync::Arc, thread};
 
 use crate::redisconn::get_redis_connection;
 pub(crate) use dotenv::dotenv;
@@ -114,14 +114,70 @@ fn build_rocket_instance(
         .mount("/", routes![up, health, login, callback])
 }
 
+fn start_client_thread(
+    r: Receiver<u8>,
+    mutex: Arc<(Mutex<HolderState>, Condvar)>,
+    client_credentials: ClientCredentials,
+) {
+    thread::spawn(move || {
+        let mut last_request: u64 = 0;
+        loop {
+            let _ = r.recv();
+            let &(ref lock, ref cvar) = &*mutex;
+            let mut state = lock.lock();
+            match &*state {
+                HolderState::Empty => {
+                    *state = HolderState::RequestPending;
+                    drop(state);
+                    let token_result = make_request_to_oidc_provider(client_credentials.clone());
+                    let mut state = lock.lock();
+                    *state = match token_result {
+                        Ok(tokenvalue) => HolderState::HasToken { token: tokenvalue },
+                        Err(_) => HolderState::Empty,
+                    };
+                    cvar.notify_all();
+                    drop(state);
+                }
+                HolderState::RequestPending => drop(state),
+                HolderState::HasToken { token } => {
+                    *state = HolderState::HasTokenIsRefreshing {
+                        token: token.clone(),
+                    };
+                    drop(state);
+                    let token_result = make_request_to_oidc_provider(client_credentials.clone());
+                    let mut state = lock.lock();
+                    if let Ok(token_result) = token_result {
+                        *state = HolderState::HasToken {
+                            token: token_result,
+                        };
+                    }
+                    cvar.notify_all();
+                    drop(state);
+                }
+                HolderState::HasTokenIsRefreshing { token: _token } => drop(state),
+            }
+        }
+    });
+}
+
 #[launch]
 async fn rocket() -> _ {
     dotenv().ok();
     let rc = init_openid_provider().unwrap();
     let conn = get_redis_connection().await.expect("Redis failed");
     let mutex = request_mutex();
-    let (s, _r) = unbounded::<u8>();
-    build_rocket_instance(rc, Box::new(conn), mutex, s)
+    let (s, r) = unbounded::<u8>();
+    let rocket_instance = build_rocket_instance(rc.clone(), Box::new(conn), mutex.clone(), s);
+    start_client_thread(
+        r,
+        mutex,
+        ClientCredentials {
+            client_id: rc.client_id,
+            client_secret: rc.client_secret,
+            token_url: rc.token_url,
+        },
+    );
+    rocket_instance
 }
 
 #[cfg(test)]

@@ -30,6 +30,7 @@ pub fn init_openid_provider() -> Result<RuntimeConfiguration, Box<dyn Error>> {
         authorization_endpoint: des.authorization_endpoint,
         token_url: des.token_endpoint,
         client_id: env::var("RIDSER_CLIENT_ID").expect("Value for RIDSER_CLIENT_ID is not set."),
+        client_secret: env::var("RIDSER_CLIENT_SECRET").expect("Value for RIDSER_CLIENT_SECRET is not set."),
         redirect_uri: env::var("RIDSER_REDIRECT_URI").expect("Value for RIDSER_REDIRECT_URI is not set."),
     })
 }
