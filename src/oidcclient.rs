@@ -185,6 +185,11 @@ pub(crate) async fn get_auth_token(
 #[cfg(test)]
 mod tests {
     use futures::executor::block_on;
+    use ureq::OrAnyStatus;
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
 
     use std::thread;
 
@@ -382,6 +387,39 @@ mod tests {
         let result = th.join().expect("No thread result");
         assert_eq!(result.unwrap().token, "nearly_expired_token");
         assert!(receive.is_err());
+    }
+
+    #[test]
+    fn return_data_from_mock_server() {
+        // Start a background HTTP server on a random local port
+        let mock_server = block_on(MockServer::start());
+
+        // Arrange the behaviour of the MockServer adding a Mock:
+        // when it receives a GET request on '/hello' it will respond with a 200.
+        block_on(
+            Mock::given(method("GET"))
+                .and(path("/hello"))
+                .respond_with(ResponseTemplate::new(200))
+                // Mounting the mock on the mock server - it's now effective!
+                .mount(&mock_server),
+        );
+
+        // If we probe the MockServer using any HTTP client it behaves as expected.
+
+        let status = ureq::get(format!("{}/hello", &mock_server.uri()).as_str())
+            .call()
+            .unwrap()
+            .status();
+        assert_eq!(status, 200);
+
+        // If the request doesn't match any `Mock` mounted on our `MockServer`
+        // a 404 is returned.
+        let status = ureq::get(format!("{}/missing", &mock_server.uri()).as_str())
+            .call()
+            .or_any_status()
+            .unwrap()
+            .status();
+        assert_eq!(status, 404);
     }
 
     #[test]
