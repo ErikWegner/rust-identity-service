@@ -68,23 +68,34 @@ async fn make_request_to_oidc_provider_dep(_key: String) -> TokenData {
     }
 }
 
-pub(crate) fn make_request_to_oidc_provider(
+pub(crate) fn make_client_credentials_request_to_oidc_provider(
     client_credentials: ClientCredentials,
-) -> Result<TokenData, &'static str> {
-    let body = ureq::get(client_credentials.token_url.as_str())
-        .call()
-        .unwrap()
-        .into_string()
-        .unwrap();
-
-    Ok(TokenData {
-        token: body,
-        expires: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            + 30,
-    })
+) -> Result<TokenData, String> {
+    let request = ureq::post(client_credentials.token_url.as_str()).send_form(&[
+        ("grant_type", "client_credentials"),
+        ("client_id", client_credentials.client_id.as_str()),
+        ("client_secret", client_credentials.client_secret.as_str()),
+        ("scope", "openid"),
+    ]);
+    match request {
+        Ok(response) => {
+            let body = response.into_string();
+            match body {
+                Ok(bodystr) => Ok(TokenData {
+                    token: bodystr,
+                    expires: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        + 30,
+                }),
+                Err(_) => Err("Invalid json response for client_credentials request".to_string()),
+            }
+        }
+        Err(f) => {
+            Err(format!("Request failed: {}", f))
+        },
+    }
 }
 
 fn request_mutex_dep() -> &'static tokio::sync::Mutex<Option<Shared<AuthTokenFuture>>> {
@@ -165,7 +176,8 @@ pub(crate) async fn get_auth_token(
         }
         HolderState::RequestPending {} => {
             println!("HolderState::RequestPending");
-            cvar.wait(&mut state);
+            let _r = tx.send(1);
+            cvar.wait_until(&mut state, Instant::now() + Duration::from_secs(3));
             let token = state.get_token();
             token.ok_or("Authentication failed")
         }
@@ -181,7 +193,10 @@ pub(crate) async fn get_auth_token(
             }
             Ok(token.clone())
         }
-        HolderState::HasTokenIsRefreshing { token } => Ok(token.clone()),
+        HolderState::HasTokenIsRefreshing { token } => {
+            let _r = tx.send(1);
+            Ok(token.clone())
+        }
     }
 }
 

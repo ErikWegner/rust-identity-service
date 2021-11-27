@@ -3,11 +3,15 @@ mod redisconn;
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use oidcclient::{
-    get_auth_token, get_auth_token_dep, make_request_to_oidc_provider, request_mutex,
-    ClientCredentials, HolderState, TokenData,
+    get_auth_token, get_auth_token_dep, make_client_credentials_request_to_oidc_provider,
+    request_mutex, ClientCredentials, HolderState, TokenData,
 };
 use parking_lot::{Condvar, Mutex};
-use std::{sync::Arc, thread};
+use std::{
+    sync::Arc,
+    thread,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use crate::redisconn::get_redis_connection;
 pub(crate) use dotenv::dotenv;
@@ -125,11 +129,18 @@ fn start_client_thread(
             let _ = r.recv();
             let &(ref lock, ref cvar) = &*mutex;
             let mut state = lock.lock();
-            match &*state {
+
+            match (*state).clone() {
                 HolderState::Empty => {
                     *state = HolderState::RequestPending;
                     drop(state);
-                    let token_result = make_request_to_oidc_provider(client_credentials.clone());
+                    last_request = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    let token_result = make_client_credentials_request_to_oidc_provider(
+                        client_credentials.clone(),
+                    );
                     let mut state = lock.lock();
                     *state = match token_result {
                         Ok(tokenvalue) => HolderState::HasToken { token: tokenvalue },
@@ -138,23 +149,68 @@ fn start_client_thread(
                     cvar.notify_all();
                     drop(state);
                 }
-                HolderState::RequestPending => drop(state),
+                HolderState::RequestPending => {
+                    let now_seconds = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    println!(
+                        "pending since: {}\nwaiting until: {}\nnow          : {}",
+                        last_request,
+                        last_request + 15,
+                        now_seconds
+                    );
+                    if last_request + 15
+                        < now_seconds
+                    {
+                        println!("Reset state");
+                        *state = HolderState::Empty;
+                        cvar.notify_all();
+                    }
+                    drop(state)
+                }
                 HolderState::HasToken { token } => {
                     *state = HolderState::HasTokenIsRefreshing {
                         token: token.clone(),
                     };
                     drop(state);
-                    let token_result = make_request_to_oidc_provider(client_credentials.clone());
+                    last_request = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    let token_result = make_client_credentials_request_to_oidc_provider(
+                        client_credentials.clone(),
+                    );
                     let mut state = lock.lock();
                     if let Ok(token_result) = token_result {
                         *state = HolderState::HasToken {
                             token: token_result,
                         };
+                    } else {
+                        let now_seconds = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs();
+
+                        if token.expires >= now_seconds {
+                            *state = HolderState::Empty
+                        }
                     }
                     cvar.notify_all();
                     drop(state);
                 }
-                HolderState::HasTokenIsRefreshing { token: _token } => drop(state),
+                HolderState::HasTokenIsRefreshing { token } => {
+                    let now_seconds = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+
+                    if token.expires >= now_seconds {
+                        *state = HolderState::Empty
+                    }
+                    cvar.notify_all();
+                    drop(state);
+                }
             }
         }
     });
