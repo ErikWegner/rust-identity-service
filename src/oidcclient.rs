@@ -1,5 +1,6 @@
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -14,7 +15,7 @@ use serde::Serialize;
 use tokio::time::{sleep, Duration};
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct TokenData {
+pub struct TokenData {
     pub token: String,
     pub expires: u64,
 }
@@ -33,7 +34,7 @@ trait AuthTokenFutureCallback {
         Self: Sized;
 }
 
-pub(crate) enum HolderState {
+pub enum HolderState {
     Empty,
     RequestPending,
     HasToken { token: TokenData },
@@ -156,7 +157,7 @@ pub(crate) async fn get_auth_token(
                 token_url: String::new(),
             };
             let _r = tx.send(1);
-            cvar.wait(&mut state);
+            cvar.wait_until(&mut state, Instant::now() + Duration::from_secs(3));
             let token = state.get_token();
             token.ok_or("Authentication failed")
         }

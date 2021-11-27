@@ -1,9 +1,12 @@
 mod oidcclient;
 mod redisconn;
 
-use crossbeam::channel::unbounded;
-use futures::lock::Mutex;
-use oidcclient::{TokenData, get_auth_token, get_auth_token_dep, make_request_to_oidc_provider, request_mutex};
+use crossbeam::channel::{unbounded, Sender};
+use oidcclient::{
+    get_auth_token, get_auth_token_dep, make_request_to_oidc_provider, request_mutex, HolderState,
+    TokenData,
+};
+use parking_lot::{Condvar, Mutex};
 use std::sync::Arc;
 
 use crate::redisconn::get_redis_connection;
@@ -78,22 +81,36 @@ async fn callback_dep() -> Json<TokenData> {
 }
 
 #[post("/callback")]
-async fn callback() -> Json<TokenData> {
-    let mutex = request_mutex();
-    let callback= make_request_to_oidc_provider;
-    let (s, r) = unbounded();
+async fn callback(
+    managed_mutex: &State<Arc<(Mutex<HolderState>, Condvar)>>,
+    managed_sender: &State<Sender<u8>>,
+) -> Result<Json<TokenData>, status::Custom<content::Json<String>>> {
+    let mutex = managed_mutex.inner().clone();
+    let s = managed_sender.inner().clone();
     let t = get_auth_token(mutex, s).await;
-    
 
-    Json(t.unwrap())
+    match t {
+        Ok(r) => Ok(Json(r)),
+        Err(msg) => Err(status::Custom(
+            Status::InternalServerError,
+            content::Json(format!("{{\"message\": \"{}\"}}", msg)),
+        )),
+    }
 }
 
-fn build_rocket_instance(rc: RuntimeConfiguration, conn: Box<dyn DataProvider>) -> Rocket<Build> {
+fn build_rocket_instance(
+    rc: RuntimeConfiguration,
+    conn: Box<dyn DataProvider>,
+    mutex: Arc<(Mutex<HolderState>, Condvar)>,
+    sender: Sender<u8>,
+) -> Rocket<Build> {
     rocket::build()
         .manage(rc)
         .manage(SharedRedis {
-            redis: Arc::new(Mutex::new(conn)),
+            redis: Arc::new(futures::lock::Mutex::new(conn)),
         })
+        .manage(mutex)
+        .manage(sender)
         .mount("/", routes![up, health, login, callback])
 }
 
@@ -102,7 +119,9 @@ async fn rocket() -> _ {
     dotenv().ok();
     let rc = init_openid_provider().unwrap();
     let conn = get_redis_connection().await.expect("Redis failed");
-    build_rocket_instance(rc, Box::new(conn))
+    let mutex = request_mutex();
+    let (s, _r) = unbounded::<u8>();
+    build_rocket_instance(rc, Box::new(conn), mutex, s)
 }
 
 #[cfg(test)]
