@@ -7,11 +7,7 @@ pub type SetIntFuture<'a> =
 
 pub trait DataProvider: Send {
     fn check_connection<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
-    fn set_int(
-        &'_ mut self,
-        key: String,
-        value: i64,
-    ) -> SetIntFuture;
+    fn set_int(&'_ mut self, key: String, value: i64) -> SetIntFuture;
 }
 
 pub struct RealRedis {
@@ -30,13 +26,12 @@ impl DataProvider for RealRedis {
         Box::pin(ping(self))
     }
 
-    fn set_int(
-        &'_ mut self,
-        key: String,
-        value: i64,
-    ) -> SetIntFuture
-    {
-        async fn set(r: &'_ mut RealRedis, key: String, value: i64) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    fn set_int(&'_ mut self, key: String, value: i64) -> SetIntFuture {
+        async fn set(
+            r: &'_ mut RealRedis,
+            key: String,
+            value: i64,
+        ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
             if let Err(err) = redis::cmd("SET")
                 .arg(key)
                 .arg(value)

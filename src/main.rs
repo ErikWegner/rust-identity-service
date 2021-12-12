@@ -3,7 +3,7 @@ mod redisconn;
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use oidcclient::{
-    get_auth_token, get_auth_token_dep, make_client_credentials_request_to_oidc_provider,
+    get_auth_token, make_client_credentials_request_to_oidc_provider,
     request_mutex, ClientCredentials, HolderState, TokenData,
 };
 use parking_lot::{Condvar, Mutex};
@@ -76,12 +76,6 @@ async fn login(
         client_id.unwrap().as_str(),
         state.unwrap().as_str(),
     )))
-}
-
-#[post("/callback_dep")]
-async fn callback_dep() -> Json<TokenData> {
-    let t = get_auth_token_dep().await;
-    Json(t)
 }
 
 #[post("/callback")]
@@ -160,9 +154,7 @@ fn start_client_thread(
                         last_request + 15,
                         now_seconds
                     );
-                    if last_request + 15
-                        < now_seconds
-                    {
+                    if last_request + 15 < now_seconds {
                         println!("Reset state");
                         *state = HolderState::Empty;
                         cvar.notify_all();

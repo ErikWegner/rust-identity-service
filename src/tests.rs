@@ -55,7 +55,10 @@ fn health_has_redis_error() {
 
     // Assert
     assert_eq!(response.status(), Status::InternalServerError);
-    assert_eq!(response.into_string().unwrap(), "{\"message\": \"redis disconnected\"}");
+    assert_eq!(
+        response.into_string().unwrap(),
+        "{\"message\": \"redis disconnected\"}"
+    );
 }
 
 #[test]
@@ -76,7 +79,9 @@ fn login_returns_url() {
     let client = Client::tracked(rocket).expect("valid rocket instance");
 
     // Act
-    let response = client.get("/login?state=a6jj3&client_id=be734165-952d-4e68-98fb-fe1dabf93349").dispatch();
+    let response = client
+        .get("/login?state=a6jj3&client_id=be734165-952d-4e68-98fb-fe1dabf93349")
+        .dispatch();
 
     // Assert
     assert_eq!(response.status(), Status::SeeOther);
@@ -106,5 +111,8 @@ fn login_without_clientid_returns_bad_request() {
 
     // Assert
     assert_eq!(response.status(), Status::BadRequest);
-    assert_eq!(response.into_string().unwrap(), "{\"message\": \"client_id is missing\"}");
+    assert_eq!(
+        response.into_string().unwrap(),
+        "{\"message\": \"client_id is missing\"}"
+    );
 }
