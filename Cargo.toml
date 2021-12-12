@@ -4,9 +4,6 @@ version = "0.1.0"
 authors = ["Erik Wegner"]
 edition = "2021"
 
-[lib]
-path = "./src/lib/lib.rs"
-
 [dependencies]
 crossbeam = "0.8.1"
 dotenv = "0.15.0"
