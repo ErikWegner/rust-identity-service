@@ -70,6 +70,7 @@ fn it_constructs_redirect_uri() {
         ),
         token_url: String::new(),
         client_id: String::from("c44"),
+        client_secret: String::from("s43"),
         redirect_uri: String::from("http://devserver.local:11280/callback"),
     };
 

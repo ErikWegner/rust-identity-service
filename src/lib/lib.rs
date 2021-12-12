@@ -22,7 +22,8 @@ fn deserialize(body: String) -> Result<OpenIdConfiguration, Box<dyn Error>> {
 }
 
 pub fn init_openid_provider() -> Result<RuntimeConfiguration, Box<dyn Error>> {
-    let dicovery_endpoint = env::var("RIDSER_METADATA_URL").expect("Value for RIDSER_METADATA_URL is not set.");
+    let dicovery_endpoint =
+        env::var("RIDSER_METADATA_URL").expect("Value for RIDSER_METADATA_URL is not set.");
     let body = ureq::get(&dicovery_endpoint).call()?.into_string()?;
     let des = deserialize(body)?;
 
@@ -30,7 +31,10 @@ pub fn init_openid_provider() -> Result<RuntimeConfiguration, Box<dyn Error>> {
         authorization_endpoint: des.authorization_endpoint,
         token_url: des.token_endpoint,
         client_id: env::var("RIDSER_CLIENT_ID").expect("Value for RIDSER_CLIENT_ID is not set."),
-        redirect_uri: env::var("RIDSER_REDIRECT_URI").expect("Value for RIDSER_REDIRECT_URI is not set."),
+        client_secret: env::var("RIDSER_CLIENT_SECRET")
+            .expect("Value for RIDSER_CLIENT_SECRET is not set."),
+        redirect_uri: env::var("RIDSER_REDIRECT_URI")
+            .expect("Value for RIDSER_REDIRECT_URI is not set."),
     })
 }
 
