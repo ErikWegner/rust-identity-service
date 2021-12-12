@@ -1,3 +1,4 @@
+use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashMap;
@@ -7,6 +8,7 @@ use rocket::{
     response::{content, status},
     Build, Rocket, State,
 };
+use tokio::time::sleep;
 
 #[macro_use]
 extern crate rocket;
@@ -50,9 +52,23 @@ fn build_rocket_instance(healthmap: Arc<HealthMap>) -> Rocket<Build> {
         .mount("/", routes![up, health])
 }
 
+fn client_token_thread(healthmap: Arc<HealthMap>) {
+    let threadhealthmap = healthmap.clone();
+    tokio::spawn(async move {
+        let key = "oidclogin".to_string();
+        loop {
+            threadhealthmap.insert(key.clone(), "OK".to_string());
+            sleep(Duration::from_secs(2)).await;
+            threadhealthmap.insert(key.clone(), "login failed".to_string());
+            sleep(Duration::from_secs(2)).await;
+        }
+    });
+}
+
 #[launch]
 fn rocket() -> _ {
     let healthmap = Arc::new(HealthMap::new());
+    client_token_thread(healthmap.clone());
     build_rocket_instance(healthmap)
 }
 
