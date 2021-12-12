@@ -6,7 +6,7 @@ use std::time::UNIX_EPOCH;
 use crossbeam::channel::Sender;
 use parking_lot::{Condvar, Mutex};
 use serde::Serialize;
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TokenData {
@@ -37,20 +37,6 @@ impl HolderState {
             HolderState::HasToken { token } => Some(token.clone()),
             HolderState::HasTokenIsRefreshing { token } => Some(token.clone()),
         }
-    }
-}
-
-async fn make_request_to_oidc_provider_dep(_key: String) -> TokenData {
-    // Simulating a network request
-    sleep(Duration::from_secs(2)).await;
-
-    TokenData {
-        token: String::from("mockdata"),
-        expires: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            + 30,
     }
 }
 

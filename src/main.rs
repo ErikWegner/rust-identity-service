@@ -3,8 +3,8 @@ mod redisconn;
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use oidcclient::{
-    get_auth_token, make_client_credentials_request_to_oidc_provider,
-    request_mutex, ClientCredentials, HolderState, TokenData,
+    get_auth_token, make_client_credentials_request_to_oidc_provider, request_mutex,
+    ClientCredentials, HolderState, TokenData,
 };
 use parking_lot::{Condvar, Mutex};
 use std::{
