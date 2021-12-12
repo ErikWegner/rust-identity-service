@@ -53,7 +53,7 @@ fn build_rocket_instance(healthmap: Arc<HealthMap>) -> Rocket<Build> {
 }
 
 fn client_token_thread(healthmap: Arc<HealthMap>) {
-    let threadhealthmap = healthmap.clone();
+    let threadhealthmap = healthmap;
     tokio::spawn(async move {
         let key = "oidclogin".to_string();
         loop {
