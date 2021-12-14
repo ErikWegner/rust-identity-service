@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::oidcclient::{get_client_token, OidcClientState};
+use crate::oidcclient::{get_client_token, ClientCredentials, OidcClientState};
 use crate::{build_rocket_instance, HealthMap};
 
 use super::rocket;
@@ -79,17 +79,21 @@ fn retrieve_token_returns_token() {
         .take(12)
         .map(|c| c as char)
         .collect();
-    let oidc_client_state = Arc::new(OidcClientState::init());
+    let client_credentials = ClientCredentials {
+        client_id: "MockClient".to_string(),
+        client_secret: "Mock Secret 123".to_string(),
+        token_url: format!("{}{}", mock_server.uri(), token_endpoint_path),
+    };
+    let oidc_client_state = Arc::new(OidcClientState::init(client_credentials));
     tokio_test::block_on(
         Mock::given(method("POST"))
             .and(path(&token_endpoint_path))
             .respond_with(ResponseTemplate::new(200).set_body_string(&token))
             .mount(&mock_server),
     );
-    let token_endpoint = format!("{}{}", mock_server.uri(), token_endpoint_path);
 
     // Act
-    let r = tokio_test::block_on(get_client_token(&oidc_client_state, token_endpoint));
+    let r = tokio_test::block_on(get_client_token(&oidc_client_state));
 
     // Assert
     assert_ok!(&r);
