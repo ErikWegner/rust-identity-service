@@ -4,6 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashMap;
 use oidcclient::{get_client_token, ClientCredentials, OidcClientState};
+use rocket::form::Form;
 use rocket::response::Redirect;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::{
@@ -117,6 +118,26 @@ async fn login(
     )))
 }
 
+#[derive(FromForm)]
+struct CallbackData<'r> {
+    redirect_uri: &'r str,
+    code: &'r str,
+}
+
+#[post("/callback", data = "<user_input>")]
+fn callback(
+    user_input: Option<Form<CallbackData<'_>>>,
+) -> Result<String, status::Custom<content::Json<&'static str>>> {
+    if user_input.is_none() {
+        return Err(status::Custom(
+            Status::BadRequest,
+            content::Json("{\"message\": \"cannot parse body\"}"),
+        ));
+    }
+    let g = user_input.unwrap();
+    Ok(format!("Your: {}, {}", g.code, g.redirect_uri))
+}
+
 fn build_rocket_instance(
     healthmap: Arc<HealthMap>,
     login_configuration: LoginConfiguration,
@@ -124,7 +145,7 @@ fn build_rocket_instance(
     rocket::build()
         .manage(healthmap)
         .manage(login_configuration)
-        .mount("/", routes![up, health, login])
+        .mount("/", routes![up, health, login, callback])
 }
 
 fn client_token_thread(healthmap: Arc<HealthMap>, oidc_client_state_p: Arc<OidcClientState>) {

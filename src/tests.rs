@@ -229,3 +229,31 @@ mod login {
         );
     }
 }
+
+mod callback {
+    use rocket::{http::Status, local::blocking::Client};
+
+    use super::build_rocket_test_instance;
+
+    #[test]
+    fn callback_creates_bad_request_for_empty_body() {
+        // Arrange
+        let t = build_rocket_test_instance();
+        let client = Client::tracked(t.rocket).expect("valid rocket instance");
+
+        // Act
+        let response = client.post("/callback").body("").dispatch();
+
+        // Assert
+        assert_eq!(
+            response.status(),
+            Status::BadRequest,
+            "{}",
+            response.into_string().unwrap()
+        );
+        assert_eq!(
+            response.into_string().unwrap(),
+            "{\"message\": \"cannot parse body\"}"
+        );
+    }
+}
