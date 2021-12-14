@@ -2,6 +2,7 @@ use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashMap;
+use oidcclient::{get_client_token, OidcClientState};
 use rocket::serde::{Deserialize, Serialize};
 use rocket::{
     http::Status,
@@ -52,11 +53,13 @@ fn build_rocket_instance(healthmap: Arc<HealthMap>) -> Rocket<Build> {
         .mount("/", routes![up, health])
 }
 
-fn client_token_thread(healthmap: Arc<HealthMap>) {
+fn client_token_thread(healthmap: Arc<HealthMap>, oidc_client_state_p: Arc<OidcClientState>) {
     let threadhealthmap = healthmap;
+    let oidc_client_state = oidc_client_state_p;
     tokio::spawn(async move {
         let key = "oidclogin".to_string();
         loop {
+            let _ = get_client_token(&oidc_client_state).await;
             threadhealthmap.insert(key.clone(), "OK".to_string());
             sleep(Duration::from_secs(2)).await;
             threadhealthmap.insert(key.clone(), "login failed".to_string());
@@ -68,9 +71,11 @@ fn client_token_thread(healthmap: Arc<HealthMap>) {
 #[launch]
 fn rocket() -> _ {
     let healthmap = Arc::new(HealthMap::new());
-    client_token_thread(healthmap.clone());
+    let oidc_client_state = Arc::new(OidcClientState::init());
+    client_token_thread(healthmap.clone(), oidc_client_state);
     build_rocket_instance(healthmap)
 }
 
+mod oidcclient;
 #[cfg(test)]
 mod tests;
