@@ -1,11 +1,17 @@
 use std::sync::Arc;
 
+use crate::oidcclient::{get_client_token, OidcClientState};
 use crate::{build_rocket_instance, HealthMap};
 
 use super::rocket;
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
 use rocket::http::Status;
 use rocket::local::blocking::Client;
 use rocket::{Build, Rocket};
+use tokio_test::assert_ok;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 struct TestEnv {
     rocket: Rocket<Build>,
@@ -53,4 +59,40 @@ fn health_simple_fail() {
         response.into_string(),
         Some("{\"faults\":{\"con\":\"failed to connect\"}}".into())
     );
+}
+
+#[test]
+fn retrieve_token_returns_token() {
+    // Arrange
+    // Start a background HTTP server on a random local port
+    let mock_server = tokio_test::block_on(MockServer::start());
+    let token_endpoint_path: String = format!(
+        "/provider/path-{}",
+        thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(12)
+            .map(|c| c as char)
+            .collect::<String>()
+    );
+    let token: String = thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(12)
+        .map(|c| c as char)
+        .collect();
+    let oidc_client_state = Arc::new(OidcClientState::init());
+    tokio_test::block_on(
+        Mock::given(method("POST"))
+            .and(path(&token_endpoint_path))
+            .respond_with(ResponseTemplate::new(200).set_body_string(&token))
+            .mount(&mock_server),
+    );
+    let token_endpoint = format!("{}{}", mock_server.uri(), token_endpoint_path);
+
+    // Act
+    let r = tokio_test::block_on(get_client_token(&oidc_client_state, token_endpoint));
+
+    // Assert
+    assert_ok!(&r);
+    let tokenresult = r.unwrap();
+    assert_eq!(tokenresult, token);
 }

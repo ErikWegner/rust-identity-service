@@ -59,7 +59,7 @@ fn client_token_thread(healthmap: Arc<HealthMap>, oidc_client_state_p: Arc<OidcC
     tokio::spawn(async move {
         let key = "oidclogin".to_string();
         loop {
-            let _ = get_client_token(&oidc_client_state).await;
+            let _ = get_client_token(&oidc_client_state, "TODO".to_string()).await;
             threadhealthmap.insert(key.clone(), "OK".to_string());
             sleep(Duration::from_secs(2)).await;
             threadhealthmap.insert(key.clone(), "login failed".to_string());
