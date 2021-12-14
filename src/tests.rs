@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::oidcclient::{get_client_token, ClientCredentials, OidcClientState};
-use crate::{build_rocket_instance, HealthMap};
+use crate::{build_rocket_instance, HealthMap, LoginConfiguration};
 
 use super::rocket;
 use rand::distributions::Alphanumeric;
@@ -16,13 +16,29 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 struct TestEnv {
     rocket: Rocket<Build>,
     health_map: Arc<HealthMap>,
+    login_configuration: LoginConfiguration,
 }
 
+fn random_string(length: usize, prefix: Option<String>) -> String {
+    let rs = thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(length)
+        .map(|c| c as char)
+        .collect::<String>();
+    format!("{}{}", prefix.unwrap_or_default(), rs)
+}
 fn build_rocket_test_instance() -> TestEnv {
     let health_map = Arc::new(HealthMap::new());
+    let login_configuration = LoginConfiguration {
+        authorization_endpoint: format!(
+            "{}/auth/login",
+            random_string(64, Some(String::from("http://unit-test-url/")))
+        ),
+    };
     TestEnv {
-        rocket: build_rocket_instance(health_map.clone()),
+        rocket: build_rocket_instance(health_map.clone(), login_configuration.clone()),
         health_map,
+        login_configuration,
     }
 }
 
@@ -99,4 +115,39 @@ fn retrieve_token_returns_token() {
     assert_ok!(&r);
     let tokenresult = r.unwrap();
     assert_eq!(tokenresult, token);
+}
+
+#[test]
+fn login_returns_redirect() {
+    // Arrange
+    let t = build_rocket_test_instance();
+    let client = Client::tracked(t.rocket).expect("valid rocket instance");
+    let state = random_string(8, None);
+    let client_id = random_string(32, None);
+    let redirect_uri = String::from("https://front.end.server/auth/callback");
+    let expected_location = format!(
+        "{}?response_type=code&client_id={}&redirect_uri={}&scope=openid&state={}",
+        t.login_configuration.authorization_endpoint, client_id, "https%3A%2F%2Ffront.end.server%2Fauth%2Fcallback", state
+    );
+
+    // Act
+    let response = client
+        .get(format!(
+            "/login?state={}&client_id={}&redirect_uri={}",
+            state, client_id, redirect_uri
+        ))
+        .dispatch();
+
+    // Assert
+    assert_eq!(
+        response.status(),
+        Status::SeeOther,
+        "{}",
+        response.into_string().unwrap()
+    );
+    assert!(response.headers().contains("Location"));
+    assert_eq!(
+        response.headers().get_one("Location"),
+        Some(expected_location.as_str())
+    );
 }
