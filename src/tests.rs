@@ -117,37 +117,115 @@ fn retrieve_token_returns_token() {
     assert_eq!(tokenresult, token);
 }
 
-#[test]
-fn login_returns_redirect() {
-    // Arrange
-    let t = build_rocket_test_instance();
-    let client = Client::tracked(t.rocket).expect("valid rocket instance");
-    let state = random_string(8, None);
-    let client_id = random_string(32, None);
-    let redirect_uri = String::from("https://front.end.server/auth/callback");
-    let expected_location = format!(
-        "{}?response_type=code&client_id={}&redirect_uri={}&scope=openid&state={}",
-        t.login_configuration.authorization_endpoint, client_id, "https%3A%2F%2Ffront.end.server%2Fauth%2Fcallback", state
-    );
+mod login {
+    use rocket::{http::Status, local::blocking::Client};
 
-    // Act
-    let response = client
-        .get(format!(
-            "/login?state={}&client_id={}&redirect_uri={}",
-            state, client_id, redirect_uri
-        ))
-        .dispatch();
+    use crate::tests::{build_rocket_test_instance, random_string};
 
-    // Assert
-    assert_eq!(
-        response.status(),
-        Status::SeeOther,
-        "{}",
-        response.into_string().unwrap()
-    );
-    assert!(response.headers().contains("Location"));
-    assert_eq!(
-        response.headers().get_one("Location"),
-        Some(expected_location.as_str())
-    );
+    #[test]
+    fn login_returns_redirect() {
+        // Arrange
+        let t = build_rocket_test_instance();
+        let client = Client::tracked(t.rocket).expect("valid rocket instance");
+        let state = random_string(8, None);
+        let client_id = random_string(32, None);
+        let redirect_uri = String::from("https://front.end.server/auth/callback");
+        let expected_location = format!(
+            "{}?response_type=code&client_id={}&redirect_uri={}&scope=openid&state={}",
+            t.login_configuration.authorization_endpoint,
+            client_id,
+            "https%3A%2F%2Ffront.end.server%2Fauth%2Fcallback",
+            state
+        );
+
+        // Act
+        let response = client
+            .get(format!(
+                "/login?state={}&client_id={}&redirect_uri={}",
+                state, client_id, redirect_uri
+            ))
+            .dispatch();
+
+        // Assert
+        assert_eq!(
+            response.status(),
+            Status::SeeOther,
+            "{}",
+            response.into_string().unwrap()
+        );
+        assert!(response.headers().contains("Location"));
+        assert_eq!(
+            response.headers().get_one("Location"),
+            Some(expected_location.as_str())
+        );
+    }
+
+    #[test]
+    fn login_without_clientid_returns_bad_request() {
+        // Arrange
+        let t = build_rocket_test_instance();
+        let client = Client::tracked(t.rocket).expect("valid rocket instance");
+        let state = random_string(8, None);
+        let redirect_uri = String::from("https://front.end.server/auth/callback");
+
+        // Act
+        let response = client
+            .get(format!(
+                "/login?state={}&redirect_uri={}",
+                state, redirect_uri
+            ))
+            .dispatch();
+
+        // Assert
+        assert_eq!(response.status(), Status::BadRequest);
+        assert_eq!(
+            response.into_string().unwrap(),
+            "{\"message\": \"client_id is missing\"}"
+        );
+    }
+
+    #[test]
+    fn login_without_state_returns_bad_request() {
+        // Arrange
+        let t = build_rocket_test_instance();
+        let client = Client::tracked(t.rocket).expect("valid rocket instance");
+        let client_id = random_string(32, None);
+        let redirect_uri = String::from("https://front.end.server/auth/callback");
+
+        // Act
+        let response = client
+            .get(format!(
+                "/login?client_id={}&redirect_uri={}",
+                client_id, redirect_uri
+            ))
+            .dispatch();
+
+        // Assert
+        assert_eq!(response.status(), Status::BadRequest);
+        assert_eq!(
+            response.into_string().unwrap(),
+            "{\"message\": \"state is missing\"}"
+        );
+    }
+
+    #[test]
+    fn login_without_redirect_uri_returns_bad_request() {
+        // Arrange
+        let t = build_rocket_test_instance();
+        let client = Client::tracked(t.rocket).expect("valid rocket instance");
+        let state = random_string(8, None);
+        let client_id = random_string(32, None);
+
+        // Act
+        let response = client
+            .get(format!("/login?state={}&client_id={}", state, client_id))
+            .dispatch();
+
+        // Assert
+        assert_eq!(response.status(), Status::BadRequest);
+        assert_eq!(
+            response.into_string().unwrap(),
+            "{\"message\": \"redirect_uri is missing\"}"
+        );
+    }
 }
