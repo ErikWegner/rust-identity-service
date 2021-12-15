@@ -1,6 +1,8 @@
 use std::pin::Pin;
 
 use futures::{future::Shared, lock::Mutex, FutureExt};
+use reqwest::StatusCode;
+use serde::Deserialize;
 
 pub struct ClientCredentials {
     pub token_url: String,
@@ -30,12 +32,17 @@ pub(crate) struct OidcClientState {
 }
 
 impl OidcClientState {
-    pub(crate) fn init(client_credentials: ClientCredentials) -> OidcClientState {
+    pub(crate) fn init(client_credentials: &ClientCredentials) -> OidcClientState {
         OidcClientState {
             mutex: Mutex::new(None),
-            client_credentials,
+            client_credentials: client_credentials.clone(),
         }
     }
+}
+
+#[derive(Deserialize)]
+struct TokenResponse {
+    access_token: String,
 }
 
 async fn retrieve_token(client_credentials: ClientCredentials) -> Result<Token, String> {
@@ -71,4 +78,39 @@ pub(crate) async fn get_client_token(oidc_client_state: &OidcClientState) -> Res
     drop(pending_request);
     let result = fut.await;
     result
+}
+
+pub(crate) async fn acg_flow_step_2(
+    client_credentials: ClientCredentials,
+    redirect_uri: String,
+    code: String,
+) -> Result<Token, (u16, String)> {
+    let form = reqwest::multipart::Form::new()
+        .text("grant_type", "authorization_code")
+        .text("client_id", client_credentials.client_id.clone())
+        .text("client_secret", client_credentials.client_secret.clone())
+        .text("redirect_uri", redirect_uri)
+        .text("code", code);
+
+    let client = reqwest::Client::new();
+    let res = client
+        .post(client_credentials.token_url.clone())
+        .multipart(form)
+        .send()
+        .await;
+    match res {
+        Ok(o) => {
+            let token_response = o.json::<TokenResponse>().await;
+            match token_response {
+                Ok(tokendata) => Ok(tokendata.access_token),
+                Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR.as_u16(), e.to_string())),
+            }
+        }
+        Err(e) => Err((
+            e.status()
+                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+                .as_u16(),
+            e.to_string(),
+        )),
+    }
 }

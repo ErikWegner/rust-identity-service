@@ -1,9 +1,13 @@
+use std::collections::BTreeMap;
 use std::ops::Deref;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashMap;
-use oidcclient::{get_client_token, ClientCredentials, OidcClientState};
+use hmac::{Hmac, NewMac};
+use jwt::{Claims, Token};
+use jwt::{Header, SignWithKey};
+use oidcclient::{acg_flow_step_2, get_client_token, ClientCredentials, OidcClientState};
 use rocket::form::Form;
 use rocket::response::Redirect;
 use rocket::serde::{Deserialize, Serialize};
@@ -12,10 +16,17 @@ use rocket::{
     response::{content, status},
     Build, Rocket, State,
 };
+use sha2::Sha256;
 use tokio::time::sleep;
 
 #[macro_use]
 extern crate rocket;
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct ErrorMessageResponse {
+    message: String,
+}
 
 type HealthMap = DashMap<String, String>;
 
@@ -27,12 +38,14 @@ struct HealthResponse {
 
 struct LoginConfiguration {
     authorization_endpoint: String,
+    client_credentials: ClientCredentials,
 }
 
 impl Clone for LoginConfiguration {
     fn clone(&self) -> Self {
         Self {
             authorization_endpoint: self.authorization_endpoint.clone(),
+            client_credentials: self.client_credentials.clone(),
         }
     }
 }
@@ -57,6 +70,15 @@ fn construct_redirect_uri(
         .unwrap()
         .as_str(),
     )
+}
+
+fn create_token_string(issuer: &str, subject: &str, private_key: &str) -> String {
+    let key: Hmac<Sha256> = Hmac::new_from_slice(private_key.as_bytes()).unwrap();
+    let mut claims = BTreeMap::new();
+    claims.insert("iss", issuer);
+    claims.insert("sub", subject);
+
+    claims.sign_with_key(&key).unwrap()
 }
 
 #[get("/up")]
@@ -125,17 +147,53 @@ struct CallbackData<'r> {
 }
 
 #[post("/callback", data = "<user_input>")]
-fn callback(
+async fn callback(
     user_input: Option<Form<CallbackData<'_>>>,
-) -> Result<String, status::Custom<content::Json<&'static str>>> {
+    state_login_configuration: &State<LoginConfiguration>,
+) -> Result<String, status::Custom<content::Json<String>>> {
     if user_input.is_none() {
         return Err(status::Custom(
             Status::BadRequest,
-            content::Json("{\"message\": \"cannot parse body\"}"),
+            content::Json("{\"message\": \"cannot parse body\"}".to_string()),
         ));
     }
     let g = user_input.unwrap();
-    Ok(format!("Your: {}, {}", g.code, g.redirect_uri))
+    let login_configuration: LoginConfiguration = state_login_configuration.deref().clone();
+    let res = acg_flow_step_2(
+        login_configuration.client_credentials,
+        g.redirect_uri.to_string(),
+        g.code.to_string(),
+    )
+    .await;
+    match res {
+        Err(e) => {
+            let emr = ErrorMessageResponse { message: e.1 };
+            Err(status::Custom(
+                Status::from_code(e.0).unwrap_or(Status::InternalServerError),
+                content::Json(serde_json::to_string(&emr).unwrap()),
+            ))
+        }
+        Ok(internal_token) => {
+            let token: Result<Token<Header, Claims, _>, jwt::Error> =
+                Token::parse_unverified(internal_token.as_str());
+            match token {
+                Err(e) => {
+                    let emr = ErrorMessageResponse {
+                        message: e.to_string(),
+                    };
+                    Err(status::Custom(
+                        Status::InternalServerError,
+                        content::Json(serde_json::to_string(&emr).unwrap()),
+                    ))
+                }
+                Ok(tokendata) => {
+                    let claims = tokendata.claims();
+                    let subject = claims.registered.subject.as_ref().unwrap().as_str();
+                    Ok(create_token_string("TODO", subject, "TODO"))
+                }
+            }
+        }
+    }
 }
 
 fn build_rocket_instance(
@@ -166,13 +224,15 @@ fn client_token_thread(healthmap: Arc<HealthMap>, oidc_client_state_p: Arc<OidcC
 #[launch]
 fn rocket() -> _ {
     let healthmap = Arc::new(HealthMap::new());
-    let oidc_client_state = Arc::new(OidcClientState::init(ClientCredentials {
+    let client_credentials = Arc::new(ClientCredentials {
         client_id: String::from("TODO"),
         client_secret: String::from("TODO"),
         token_url: String::from("TODO"),
-    }));
+    });
+    let oidc_client_state = Arc::new(OidcClientState::init(&client_credentials));
     let login_configuration = LoginConfiguration {
         authorization_endpoint: String::from("TODO"),
+        client_credentials: client_credentials.deref().clone(),
     };
     client_token_thread(healthmap.clone(), oidc_client_state);
     build_rocket_instance(healthmap, login_configuration)
