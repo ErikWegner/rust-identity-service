@@ -4,6 +4,7 @@ use crate::oidcclient::{get_client_token, ClientCredentials, OidcClientState};
 use crate::{build_rocket_instance, HealthMap, LoginConfiguration};
 
 use super::rocket;
+use hmac::{Hmac, NewMac};
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use rocket::http::Status;
@@ -27,8 +28,13 @@ fn random_string(length: usize, prefix: Option<String>) -> String {
         .collect::<String>();
     format!("{}{}", prefix.unwrap_or_default(), rs)
 }
-fn build_rocket_test_instance(token_url: Option<String>) -> TestEnv {
+
+fn build_rocket_test_instance(
+    token_url: Option<String>,
+    verification_key: Option<&String>,
+) -> TestEnv {
     let health_map = Arc::new(HealthMap::new());
+    let key = verification_key.map(|key| Hmac::new_from_slice(key.as_bytes()).unwrap());
     let login_configuration = LoginConfiguration {
         authorization_endpoint: format!(
             "{}/auth/login",
@@ -41,6 +47,7 @@ fn build_rocket_test_instance(token_url: Option<String>) -> TestEnv {
             client_id: random_string(12, None),
             client_secret: random_string(24, Some("Secret".to_string())),
         },
+        verification_key: key,
     };
     TestEnv {
         rocket: build_rocket_instance(health_map.clone(), login_configuration.clone()),
@@ -51,7 +58,7 @@ fn build_rocket_test_instance(token_url: Option<String>) -> TestEnv {
 
 #[test]
 fn up() {
-    let t = build_rocket_test_instance(None);
+    let t = build_rocket_test_instance(None, None);
     let client = Client::tracked(t.rocket).expect("valid rocket instance");
     let response = client.get("/up").dispatch();
     assert_eq!(response.status(), Status::Ok);
@@ -60,7 +67,7 @@ fn up() {
 
 #[test]
 fn health_simple_ok() {
-    let t = build_rocket_test_instance(None);
+    let t = build_rocket_test_instance(None, None);
     t.health_map.clear();
     t.health_map.insert("con".to_string(), "OK".to_string());
     let client = Client::tracked(t.rocket).expect("valid rocket instance");
@@ -71,7 +78,7 @@ fn health_simple_ok() {
 
 #[test]
 fn health_simple_fail() {
-    let t = build_rocket_test_instance(None);
+    let t = build_rocket_test_instance(None, None);
     t.health_map.clear();
     t.health_map
         .insert("con".to_string(), "failed to connect".to_string());
@@ -121,7 +128,7 @@ mod login {
     #[test]
     fn login_returns_redirect() {
         // Arrange
-        let t = build_rocket_test_instance(None);
+        let t = build_rocket_test_instance(None, None);
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
         let state = random_string(8, None);
         let client_id = random_string(32, None);
@@ -159,7 +166,7 @@ mod login {
     #[test]
     fn login_without_clientid_returns_bad_request() {
         // Arrange
-        let t = build_rocket_test_instance(None);
+        let t = build_rocket_test_instance(None, None);
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
         let state = random_string(8, None);
         let redirect_uri = String::from("https://front.end.server/auth/callback");
@@ -183,7 +190,7 @@ mod login {
     #[test]
     fn login_without_state_returns_bad_request() {
         // Arrange
-        let t = build_rocket_test_instance(None);
+        let t = build_rocket_test_instance(None, None);
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
         let client_id = random_string(32, None);
         let redirect_uri = String::from("https://front.end.server/auth/callback");
@@ -207,7 +214,7 @@ mod login {
     #[test]
     fn login_without_redirect_uri_returns_bad_request() {
         // Arrange
-        let t = build_rocket_test_instance(None);
+        let t = build_rocket_test_instance(None, None);
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
         let state = random_string(8, None);
         let client_id = random_string(32, None);
@@ -243,6 +250,8 @@ mod callback {
 
     use super::{build_rocket_test_instance, random_string};
 
+    const UNITTEST_KEYFILE: &str = "./test.pem";
+
     fn load_key(keypath: &str) -> String {
         let mut key_file = File::open(keypath).unwrap();
         let mut key = String::new();
@@ -251,8 +260,7 @@ mod callback {
     }
 
     fn new_token(user_id: &str, iss: &str) -> String {
-        let key: Hmac<Sha256> =
-            Hmac::new_from_slice(load_key("./test.pem").as_bytes()).unwrap();
+        let key: Hmac<Sha256> = Hmac::new_from_slice(load_key(UNITTEST_KEYFILE).as_bytes()).unwrap();
         let mut claims = BTreeMap::new();
 
         claims.insert("iss", iss);
@@ -268,7 +276,7 @@ mod callback {
     #[test]
     fn callback_creates_bad_request_for_empty_body() {
         // Arrange
-        let t = build_rocket_test_instance(None);
+        let t = build_rocket_test_instance(None, None);
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
 
         // Act
@@ -297,18 +305,17 @@ mod callback {
         let user_id = random_string(8, Some("user-".to_string()));
         let issuer = random_string(12, Some("issuer-".to_string()));
         let token = format!("{{\"access_token\":\"{}\"}}", new_token(&user_id, &issuer));
-
+        let key = load_key(UNITTEST_KEYFILE);
         tokio_test::block_on(
             Mock::given(method("POST"))
                 .and(path(&token_endpoint_path))
                 .respond_with(ResponseTemplate::new(200).set_body_string(&token))
                 .mount(&mock_server),
         );
-        let t = build_rocket_test_instance(Some(format!(
-            "{}{}",
-            mock_server.uri(),
-            token_endpoint_path
-        )));
+        let t = build_rocket_test_instance(
+            Some(format!("{}{}", mock_server.uri(), token_endpoint_path)),
+            Some(&key),
+        );
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
 
         // Act

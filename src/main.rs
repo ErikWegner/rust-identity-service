@@ -5,7 +5,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashMap;
 use hmac::{Hmac, NewMac};
-use jwt::{Claims, Token};
+use jwt::{Claims, Token, VerifyWithKey};
 use jwt::{Header, SignWithKey};
 use oidcclient::{acg_flow_step_2, get_client_token, ClientCredentials, OidcClientState};
 use rocket::form::Form;
@@ -39,6 +39,7 @@ struct HealthResponse {
 struct LoginConfiguration {
     authorization_endpoint: String,
     client_credentials: ClientCredentials,
+    verification_key: Option<Hmac<Sha256>>,
 }
 
 impl Clone for LoginConfiguration {
@@ -46,6 +47,7 @@ impl Clone for LoginConfiguration {
         Self {
             authorization_endpoint: self.authorization_endpoint.clone(),
             client_credentials: self.client_credentials.clone(),
+            verification_key: self.verification_key.clone(),
         }
     }
 }
@@ -174,8 +176,9 @@ async fn callback(
             ))
         }
         Ok(internal_token) => {
-            let token: Result<Token<Header, Claims, _>, jwt::Error> =
-                Token::parse_unverified(internal_token.as_str());
+            let token: Result<Token<Header, Claims, _>, jwt::Error> = internal_token
+                .as_str()
+                .verify_with_key(&login_configuration.verification_key.unwrap());
             match token {
                 Err(e) => {
                     let emr = ErrorMessageResponse {
@@ -233,6 +236,7 @@ fn rocket() -> _ {
     let login_configuration = LoginConfiguration {
         authorization_endpoint: String::from("TODO"),
         client_credentials: client_credentials.deref().clone(),
+        verification_key: None,
     };
     client_token_thread(healthmap.clone(), oidc_client_state);
     build_rocket_instance(healthmap, login_configuration)
