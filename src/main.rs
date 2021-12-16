@@ -1,13 +1,16 @@
 use std::collections::BTreeMap;
+use std::env;
 use std::ops::Deref;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashMap;
+use dotenv::dotenv;
 use jwt::{Claims, PKeyWithDigest, SigningAlgorithm, Token, VerifyWithKey};
 use jwt::{Header, SignWithKey};
 use oidcclient::{acg_flow_step_2, get_client_token, ClientCredentials, OidcClientState};
-use openssl::pkey::{Private, Public};
+use openssl::hash::MessageDigest;
+use openssl::pkey::{PKey, Private, Public};
 use rocket::form::Form;
 use rocket::response::Redirect;
 use rocket::serde::{Deserialize, Serialize};
@@ -89,6 +92,70 @@ fn create_token_string(issuer: &str, subject: &str, key: &impl SigningAlgorithm)
     claims.insert("sub", subject);
 
     claims.sign_with_key(key).unwrap()
+}
+
+#[derive(Deserialize)]
+struct OpenIdConfiguration {
+    authorization_endpoint: String,
+    token_endpoint: String,
+    jwks_uri: String,
+}
+
+#[derive(Deserialize)]
+struct CertsX5CResponse {
+    r#use: String,
+    n: String,
+    x5c: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct CertsResponse {
+    keys: Vec<CertsX5CResponse>,
+}
+
+struct DiscoveryResult {
+    authorization_endpoint: String,
+    token_endpoint: String,
+    verification_key: PKeyWithDigest<Public>,
+}
+
+async fn init_env() -> DiscoveryResult {
+    let dicovery_endpoint =
+        env::var("RIDSER_METADATA_URL").expect("Value for RIDSER_METADATA_URL is not set.");
+    let openid_configuration = reqwest::get(&dicovery_endpoint)
+        .await
+        .unwrap_or_else(|_| panic!("Endpoint {} could not be loaded", dicovery_endpoint))
+        .json::<OpenIdConfiguration>()
+        .await
+        .unwrap_or_else(|_| panic!("Could not parse response from {}", dicovery_endpoint));
+    let certs_uri = openid_configuration.jwks_uri;
+    let certs_response = reqwest::get(&certs_uri)
+        .await
+        .unwrap_or_else(|_| panic!("Certificates could not be loaded from {}", certs_uri))
+        .json::<CertsResponse>()
+        .await
+        .unwrap_or_else(|_| panic!("Could not parse response from {}", certs_uri));
+    let certs_key = certs_response
+        .keys
+        .iter()
+        .find_map(|f| {
+            if f.r#use == "sig" {
+                Some(format!("-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA{}IDAQAB\n-----END PUBLIC KEY-----\n", f.n))
+                //Some(f.x5c[0].clone())
+            } else {
+                None
+            }
+        })
+        .expect("No verification key provided");
+    let verification_key = PKeyWithDigest {
+        digest: MessageDigest::sha256(),
+        key: PKey::public_key_from_pem(certs_key.as_bytes()).expect("Verification key invalid"),
+    };
+    DiscoveryResult {
+        authorization_endpoint: openid_configuration.authorization_endpoint,
+        token_endpoint: openid_configuration.token_endpoint,
+        verification_key,
+    }
 }
 
 #[get("/up")]
@@ -237,7 +304,9 @@ fn client_token_thread(healthmap: Arc<HealthMap>, oidc_client_state_p: Arc<OidcC
 }
 
 #[launch]
-fn rocket() -> _ {
+async fn rocket() -> _ {
+    dotenv().ok();
+    let discovery_result = init_env().await;
     let healthmap = Arc::new(HealthMap::new());
     let client_credentials = Arc::new(ClientCredentials {
         client_id: String::from("TODO"),
@@ -248,7 +317,7 @@ fn rocket() -> _ {
     let login_configuration = LoginConfiguration {
         authorization_endpoint: String::from("TODO"),
         client_credentials: client_credentials.deref().clone(),
-        verification_key: None,
+        verification_key: Some(discovery_result.verification_key),
         issuer: String::from("TODO"),
         issuing_key: None,
     };
