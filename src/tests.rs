@@ -227,17 +227,39 @@ mod login {
 }
 
 mod callback {
-    use jwt::{Claims, Header, Token};
+    use std::{collections::BTreeMap, fs::File, io::Read};
+
+    use hmac::{Hmac, NewMac};
+    use jwt::{Claims, Header, SignWithKey, Token};
     use rocket::{
         http::{ContentType, Status},
         local::blocking::Client,
     };
+    use sha2::Sha256;
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
     };
 
     use super::{build_rocket_test_instance, random_string};
+
+    fn load_key(keypath: &str) -> String {
+        let mut key_file = File::open(keypath).unwrap();
+        let mut key = String::new();
+        key_file.read_to_string(&mut key).unwrap();
+        key
+    }
+
+    fn new_token(user_id: &str, iss: &str) -> String {
+        let key: Hmac<Sha256> =
+            Hmac::new_from_slice(load_key("./test.pem").as_bytes()).unwrap();
+        let mut claims = BTreeMap::new();
+
+        claims.insert("iss", iss);
+        claims.insert("sub", user_id);
+
+        claims.sign_with_key(&key).unwrap()
+    }
 
     fn callback_body(redirect_uri: String, code: String) -> String {
         format!("redirect_uri={}&code={}", redirect_uri, code)
@@ -272,19 +294,10 @@ mod callback {
         let code = random_string(24, None);
         let mock_server = tokio_test::block_on(MockServer::start());
         let token_endpoint_path = random_string(12, Some("/provider/path-".to_string()));
-        let token = String::from(
-            "{\"access_token\":\"\
-eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE2MzY0NDAyOTQsIml\
-hdCI6MTYzNjQzOTk5NCwiaXNzIjoiaHR0cHM6Ly9leGFtcGxlLm9yZy8iLCJzdWIi\
-OiI2Y2MyZDFkMy0zOGVkLTQ0OWEtOTkzMy1lNzFkNTE1OGM1YTAiLCJ0eXAiOiJCZ\
-WFyZXIiLCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIn0.dEDyLww3fAlttE\
-yecqeJoZtgo1tHNpcK-fF3ScDlQmzT-OMVJKlbiWq2ihxQ1KVX-zi80wEbRu5mxht\
-SltfoV2LJoJGxLUhTBgw1ip_NMojF2GuSfDBGpPX3nYFYvAJRKdL8E0pS_hPrMRqh\
-wFjJJWYGPlrbre99173ZqZTlB0GAAfUC65533MFtL1CegxfqZiYJ3MY2ZxpCUWBdg\
-XTVjOyz-3iJGZdCxQts_H4toE6i2mVSu5wNvJEl0FibR2Lwer1wvFMTksR56hioCf\
-ongesHz2kaQYrlntHD4zH3OOW79qZ5Jvb1O326a39RioQiJMaCElDY3psi4xXCTaY\
-95g\"}",
-        );
+        let user_id = random_string(8, Some("user-".to_string()));
+        let issuer = random_string(12, Some("issuer-".to_string()));
+        let token = format!("{{\"access_token\":\"{}\"}}", new_token(&user_id, &issuer));
+
         tokio_test::block_on(
             Mock::given(method("POST"))
                 .and(path(&token_endpoint_path))
@@ -319,7 +332,7 @@ ongesHz2kaQYrlntHD4zH3OOW79qZ5Jvb1O326a39RioQiJMaCElDY3psi4xXCTaY\
                 .as_ref()
                 .unwrap()
                 .as_str(),
-            "6cc2d1d3-38ed-449a-9933-e71d5158c5a0"
+            user_id
         );
     }
 }
