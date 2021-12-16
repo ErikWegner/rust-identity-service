@@ -4,10 +4,10 @@ use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashMap;
-use hmac::{Hmac, NewMac};
-use jwt::{Claims, Token, VerifyWithKey};
+use jwt::{Claims, PKeyWithDigest, SigningAlgorithm, Token, VerifyWithKey};
 use jwt::{Header, SignWithKey};
 use oidcclient::{acg_flow_step_2, get_client_token, ClientCredentials, OidcClientState};
+use openssl::pkey::{Private, Public};
 use rocket::form::Form;
 use rocket::response::Redirect;
 use rocket::serde::{Deserialize, Serialize};
@@ -16,7 +16,6 @@ use rocket::{
     response::{content, status},
     Build, Rocket, State,
 };
-use sha2::Sha256;
 use tokio::time::sleep;
 
 #[macro_use]
@@ -39,7 +38,9 @@ struct HealthResponse {
 struct LoginConfiguration {
     authorization_endpoint: String,
     client_credentials: ClientCredentials,
-    verification_key: Option<Hmac<Sha256>>,
+    verification_key: Option<PKeyWithDigest<Public>>,
+    issuer: String,
+    issuing_key: Option<PKeyWithDigest<Private>>,
 }
 
 impl Clone for LoginConfiguration {
@@ -47,7 +48,15 @@ impl Clone for LoginConfiguration {
         Self {
             authorization_endpoint: self.authorization_endpoint.clone(),
             client_credentials: self.client_credentials.clone(),
-            verification_key: self.verification_key.clone(),
+            verification_key: self.verification_key.as_ref().map(|vk| PKeyWithDigest {
+                digest: vk.digest,
+                key: vk.key.clone(),
+            }),
+            issuer: self.issuer.clone(),
+            issuing_key: self.issuing_key.as_ref().map(|i| PKeyWithDigest {
+                digest: i.digest,
+                key: i.key.clone(),
+            }),
         }
     }
 }
@@ -74,13 +83,12 @@ fn construct_redirect_uri(
     )
 }
 
-fn create_token_string(issuer: &str, subject: &str, private_key: &str) -> String {
-    let key: Hmac<Sha256> = Hmac::new_from_slice(private_key.as_bytes()).unwrap();
+fn create_token_string(issuer: &str, subject: &str, key: &impl SigningAlgorithm) -> String {
     let mut claims = BTreeMap::new();
     claims.insert("iss", issuer);
     claims.insert("sub", subject);
 
-    claims.sign_with_key(&key).unwrap()
+    claims.sign_with_key(key).unwrap()
 }
 
 #[get("/up")]
@@ -192,7 +200,11 @@ async fn callback(
                 Ok(tokendata) => {
                     let claims = tokendata.claims();
                     let subject = claims.registered.subject.as_ref().unwrap().as_str();
-                    Ok(create_token_string("TODO", subject, "TODO"))
+                    Ok(create_token_string(
+                        login_configuration.issuer.as_str(),
+                        subject,
+                        &login_configuration.issuing_key.unwrap(),
+                    ))
                 }
             }
         }
@@ -237,6 +249,8 @@ fn rocket() -> _ {
         authorization_endpoint: String::from("TODO"),
         client_credentials: client_credentials.deref().clone(),
         verification_key: None,
+        issuer: String::from("TODO"),
+        issuing_key: None,
     };
     client_token_thread(healthmap.clone(), oidc_client_state);
     build_rocket_instance(healthmap, login_configuration)

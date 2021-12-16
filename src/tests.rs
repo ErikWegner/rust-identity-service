@@ -4,7 +4,9 @@ use crate::oidcclient::{get_client_token, ClientCredentials, OidcClientState};
 use crate::{build_rocket_instance, HealthMap, LoginConfiguration};
 
 use super::rocket;
-use hmac::{Hmac, NewMac};
+use jwt::PKeyWithDigest;
+use openssl::hash::MessageDigest;
+use openssl::pkey::PKey;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use rocket::http::Status;
@@ -32,9 +34,18 @@ fn random_string(length: usize, prefix: Option<String>) -> String {
 fn build_rocket_test_instance(
     token_url: Option<String>,
     verification_key: Option<&String>,
+    issuer: &str,
+    issuing_key: Option<&String>,
 ) -> TestEnv {
     let health_map = Arc::new(HealthMap::new());
-    let key = verification_key.map(|key| Hmac::new_from_slice(key.as_bytes()).unwrap());
+    let verification_key = verification_key.map(|key| PKeyWithDigest {
+        digest: MessageDigest::sha256(),
+        key: PKey::public_key_from_pem(key.as_bytes()).unwrap(),
+    });
+    let issuing_key = issuing_key.map(|key| PKeyWithDigest {
+        digest: MessageDigest::sha256(),
+        key: PKey::private_key_from_pem(key.as_bytes()).unwrap(),
+    });
     let login_configuration = LoginConfiguration {
         authorization_endpoint: format!(
             "{}/auth/login",
@@ -47,7 +58,9 @@ fn build_rocket_test_instance(
             client_id: random_string(12, None),
             client_secret: random_string(24, Some("Secret".to_string())),
         },
-        verification_key: key,
+        verification_key,
+        issuer: String::from(issuer),
+        issuing_key,
     };
     TestEnv {
         rocket: build_rocket_instance(health_map.clone(), login_configuration.clone()),
@@ -58,7 +71,7 @@ fn build_rocket_test_instance(
 
 #[test]
 fn up() {
-    let t = build_rocket_test_instance(None, None);
+    let t = build_rocket_test_instance(None, None, "unittest", None);
     let client = Client::tracked(t.rocket).expect("valid rocket instance");
     let response = client.get("/up").dispatch();
     assert_eq!(response.status(), Status::Ok);
@@ -67,7 +80,7 @@ fn up() {
 
 #[test]
 fn health_simple_ok() {
-    let t = build_rocket_test_instance(None, None);
+    let t = build_rocket_test_instance(None, None, "unittest", None);
     t.health_map.clear();
     t.health_map.insert("con".to_string(), "OK".to_string());
     let client = Client::tracked(t.rocket).expect("valid rocket instance");
@@ -78,7 +91,7 @@ fn health_simple_ok() {
 
 #[test]
 fn health_simple_fail() {
-    let t = build_rocket_test_instance(None, None);
+    let t = build_rocket_test_instance(None, None, "unittest", None);
     t.health_map.clear();
     t.health_map
         .insert("con".to_string(), "failed to connect".to_string());
@@ -128,7 +141,7 @@ mod login {
     #[test]
     fn login_returns_redirect() {
         // Arrange
-        let t = build_rocket_test_instance(None, None);
+        let t = build_rocket_test_instance(None, None, "unittest", None);
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
         let state = random_string(8, None);
         let client_id = random_string(32, None);
@@ -166,7 +179,7 @@ mod login {
     #[test]
     fn login_without_clientid_returns_bad_request() {
         // Arrange
-        let t = build_rocket_test_instance(None, None);
+        let t = build_rocket_test_instance(None, None, "unittest", None);
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
         let state = random_string(8, None);
         let redirect_uri = String::from("https://front.end.server/auth/callback");
@@ -190,7 +203,7 @@ mod login {
     #[test]
     fn login_without_state_returns_bad_request() {
         // Arrange
-        let t = build_rocket_test_instance(None, None);
+        let t = build_rocket_test_instance(None, None, "unittest", None);
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
         let client_id = random_string(32, None);
         let redirect_uri = String::from("https://front.end.server/auth/callback");
@@ -214,7 +227,7 @@ mod login {
     #[test]
     fn login_without_redirect_uri_returns_bad_request() {
         // Arrange
-        let t = build_rocket_test_instance(None, None);
+        let t = build_rocket_test_instance(None, None, "unittest", None);
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
         let state = random_string(8, None);
         let client_id = random_string(32, None);
@@ -236,13 +249,12 @@ mod login {
 mod callback {
     use std::{collections::BTreeMap, fs::File, io::Read};
 
-    use hmac::{Hmac, NewMac};
-    use jwt::{Claims, Header, SignWithKey, Token};
+    use jwt::{AlgorithmType, Claims, Header, PKeyWithDigest, SignWithKey, Token, VerifyWithKey};
+    use openssl::{hash::MessageDigest, pkey::PKey};
     use rocket::{
         http::{ContentType, Status},
         local::blocking::Client,
     };
-    use sha2::Sha256;
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -250,7 +262,12 @@ mod callback {
 
     use super::{build_rocket_test_instance, random_string};
 
-    const UNITTEST_KEYFILE: &str = "./test.pem";
+    /** A token from the remote authentication system is signed with this key */
+    const UNITTEST_TRUSTED_KEYFILE: &str = "./test.pem";
+    const UNITTEST_TRUSTED_PUBKEYFILE: &str = "./testpublic.pem";
+    /** A self issued token is signed with this key */
+    const UNITTEST_ISSUER_KEYFILE: &str = "./test2.pem";
+    const UNITTEST_ISSUER_PUBKEYFILE: &str = "./testpublic2.pem";
 
     fn load_key(keypath: &str) -> String {
         let mut key_file = File::open(keypath).unwrap();
@@ -260,13 +277,24 @@ mod callback {
     }
 
     fn new_token(user_id: &str, iss: &str) -> String {
-        let key: Hmac<Sha256> = Hmac::new_from_slice(load_key(UNITTEST_KEYFILE).as_bytes()).unwrap();
+        let key = PKeyWithDigest {
+            digest: MessageDigest::sha256(),
+            key: PKey::private_key_from_pem(load_key(UNITTEST_TRUSTED_KEYFILE).as_bytes()).unwrap(),
+        };
+        let header = Header {
+            algorithm: AlgorithmType::Rs256,
+            ..Default::default()
+        };
+
         let mut claims = BTreeMap::new();
 
         claims.insert("iss", iss);
         claims.insert("sub", user_id);
 
-        claims.sign_with_key(&key).unwrap()
+        let signed_token = Token::new(header, claims)
+            .sign_with_key(&key)
+            .expect("Cannot sign new token.");
+        signed_token.as_str().to_string()
     }
 
     fn callback_body(redirect_uri: String, code: String) -> String {
@@ -276,7 +304,7 @@ mod callback {
     #[test]
     fn callback_creates_bad_request_for_empty_body() {
         // Arrange
-        let t = build_rocket_test_instance(None, None);
+        let t = build_rocket_test_instance(None, None, "unittest", None);
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
 
         // Act
@@ -303,9 +331,20 @@ mod callback {
         let mock_server = tokio_test::block_on(MockServer::start());
         let token_endpoint_path = random_string(12, Some("/provider/path-".to_string()));
         let user_id = random_string(8, Some("user-".to_string()));
-        let issuer = random_string(12, Some("issuer-".to_string()));
-        let token = format!("{{\"access_token\":\"{}\"}}", new_token(&user_id, &issuer));
-        let key = load_key(UNITTEST_KEYFILE);
+        let second_issuer = random_string(12, Some("issuer2-".to_string()));
+        let external_issuer = random_string(12, Some("externalissuer-".to_string()));
+        let token = format!(
+            "{{\"access_token\":\"{}\"}}",
+            new_token(&user_id, &external_issuer)
+        );
+        let verification_key = load_key(UNITTEST_TRUSTED_PUBKEYFILE);
+        let issuing_key = load_key(UNITTEST_ISSUER_KEYFILE);
+
+        let pubkey2 = PKeyWithDigest {
+            digest: MessageDigest::sha256(),
+            key: PKey::public_key_from_pem(load_key(UNITTEST_ISSUER_PUBKEYFILE).as_bytes())
+                .unwrap(),
+        };
         tokio_test::block_on(
             Mock::given(method("POST"))
                 .and(path(&token_endpoint_path))
@@ -314,7 +353,9 @@ mod callback {
         );
         let t = build_rocket_test_instance(
             Some(format!("{}{}", mock_server.uri(), token_endpoint_path)),
-            Some(&key),
+            Some(&verification_key),
+            second_issuer.as_str(),
+            Some(&issuing_key),
         );
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
 
@@ -329,7 +370,9 @@ mod callback {
         let status = response.status();
         let te = response.into_string().unwrap();
         assert_eq!(status, Status::Ok, "{}", te);
-        let responsetoken: Token<Header, Claims, _> = Token::parse_unverified(te.as_str()).unwrap();
+        let responsetoken_verifyresult: Result<Token<Header, Claims, _>, _> =
+            te.as_str().verify_with_key(&pubkey2);
+        let responsetoken = responsetoken_verifyresult.expect("Verifcation succeeded");
 
         assert_eq!(
             responsetoken
@@ -340,6 +383,16 @@ mod callback {
                 .unwrap()
                 .as_str(),
             user_id
+        );
+        assert_eq!(
+            responsetoken
+                .claims()
+                .registered
+                .issuer
+                .as_ref()
+                .unwrap()
+                .as_str(),
+            second_issuer
         );
     }
 }
