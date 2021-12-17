@@ -11,6 +11,7 @@ use jwt::{Header, SignWithKey};
 use oidcclient::{acg_flow_step_2, get_client_token, ClientCredentials, OidcClientState};
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, Private, Public};
+use openssl::x509::X509;
 use rocket::form::Form;
 use rocket::response::Redirect;
 use rocket::serde::{Deserialize, Serialize};
@@ -140,16 +141,20 @@ async fn init_env() -> DiscoveryResult {
         .iter()
         .find_map(|f| {
             if f.r#use == "sig" {
-                Some(format!("-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA{}IDAQAB\n-----END PUBLIC KEY-----\n", f.n))
-                //Some(f.x5c[0].clone())
+                Some(format!(
+                    "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+                    f.x5c[0]
+                ))
             } else {
                 None
             }
         })
         .expect("No verification key provided");
+    let x509 = X509::from_pem(certs_key.as_bytes()).expect("Verification key parser error");
+    let x509_public_key = x509.public_key();
     let verification_key = PKeyWithDigest {
         digest: MessageDigest::sha256(),
-        key: PKey::public_key_from_pem(certs_key.as_bytes()).expect("Verification key invalid"),
+        key: x509_public_key.expect("Verification key invalid"),
     };
     DiscoveryResult {
         authorization_endpoint: openid_configuration.authorization_endpoint,
