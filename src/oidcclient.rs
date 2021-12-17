@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{collections::HashMap, pin::Pin};
 
 use futures::{future::Shared, lock::Mutex, FutureExt};
 use reqwest::StatusCode;
@@ -85,21 +85,27 @@ pub(crate) async fn acg_flow_step_2(
     redirect_uri: String,
     code: String,
 ) -> Result<Token, (u16, String)> {
-    let form = reqwest::multipart::Form::new()
-        .text("grant_type", "authorization_code")
-        .text("client_id", client_credentials.client_id.clone())
-        .text("client_secret", client_credentials.client_secret.clone())
-        .text("redirect_uri", redirect_uri)
-        .text("code", code);
+    let mut form_data = HashMap::new();
+    form_data.insert("grant_type", "authorization_code");
+    form_data.insert("client_id", client_credentials.client_id.as_str());
+    form_data.insert("client_secret", client_credentials.client_secret.as_str());
+    form_data.insert("redirect_uri", redirect_uri.as_str());
+    form_data.insert("code", code.as_str());
 
     let client = reqwest::Client::new();
     let res = client
         .post(client_credentials.token_url.clone())
-        .multipart(form)
+        .form(&form_data)
         .send()
         .await;
     match res {
         Ok(o) => {
+            if o.status() != StatusCode::OK {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                    o.text().await.unwrap(),
+                ));
+            }
             let token_response = o.json::<TokenResponse>().await;
             match token_response {
                 Ok(tokendata) => Ok(tokendata.access_token),

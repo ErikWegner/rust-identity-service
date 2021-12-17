@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::env;
+use std::fs::File;
+use std::io::Read;
 use std::ops::Deref;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
@@ -105,7 +107,6 @@ struct OpenIdConfiguration {
 #[derive(Deserialize)]
 struct CertsX5CResponse {
     r#use: String,
-    n: String,
     x5c: Vec<String>,
 }
 
@@ -114,13 +115,28 @@ struct CertsResponse {
     keys: Vec<CertsX5CResponse>,
 }
 
-struct DiscoveryResult {
-    authorization_endpoint: String,
+struct EnvAndDiscoveryResult {
+    internal_client_id: String,
+    internal_client_secret: String,
+    issuer: String,
+    public_authorization_endpoint: String,
+    signing_key: PKeyWithDigest<Private>,
     token_endpoint: String,
     verification_key: PKeyWithDigest<Public>,
 }
 
-async fn init_env() -> DiscoveryResult {
+async fn init_env() -> EnvAndDiscoveryResult {
+    let internal_client_id =
+        env::var("RIDSER_CLIENT_ID").expect("Value for RIDSER_CLIENT_ID is not set.");
+    let internal_client_secret =
+        env::var("RIDSER_CLIENT_SECRET").expect("Value for RIDSER_CLIENT_SECRET is not set.");
+    let issuer = env::var("RIDSER_ISSUER").expect("Value for RIDSER_ISSUER is not set.");
+    let key_filename =
+        env::var("RIDSER_SIGNING_KEY_FILE").expect("Value for RIDSER_SIGNING_KEY_FILE is not set.");
+    let signing_key = PKeyWithDigest {
+        digest: MessageDigest::sha256(),
+        key: PKey::private_key_from_pem(load_key(key_filename.as_str()).as_bytes()).unwrap(),
+    };
     let dicovery_endpoint =
         env::var("RIDSER_METADATA_URL").expect("Value for RIDSER_METADATA_URL is not set.");
     let openid_configuration = reqwest::get(&dicovery_endpoint)
@@ -156,11 +172,23 @@ async fn init_env() -> DiscoveryResult {
         digest: MessageDigest::sha256(),
         key: x509_public_key.expect("Verification key invalid"),
     };
-    DiscoveryResult {
-        authorization_endpoint: openid_configuration.authorization_endpoint,
+    EnvAndDiscoveryResult {
+        internal_client_id,
+        internal_client_secret,
+        issuer,
+        public_authorization_endpoint: env::var("RIDSER_PUBLIC_AUTHORIZATION_URL")
+            .unwrap_or_else(|_| openid_configuration.authorization_endpoint.clone()),
+        signing_key,
         token_endpoint: openid_configuration.token_endpoint,
         verification_key,
     }
+}
+
+fn load_key(keypath: &str) -> String {
+    let mut key_file = File::open(keypath).unwrap();
+    let mut key = String::new();
+    key_file.read_to_string(&mut key).unwrap();
+    key
 }
 
 #[get("/up")]
@@ -314,22 +342,24 @@ async fn rocket() -> _ {
     let discovery_result = init_env().await;
     let healthmap = Arc::new(HealthMap::new());
     let client_credentials = Arc::new(ClientCredentials {
-        client_id: String::from("TODO"),
-        client_secret: String::from("TODO"),
-        token_url: String::from("TODO"),
+        client_id: discovery_result.internal_client_id,
+        client_secret: discovery_result.internal_client_secret,
+        token_url: discovery_result.token_endpoint,
     });
     let oidc_client_state = Arc::new(OidcClientState::init(&client_credentials));
     let login_configuration = LoginConfiguration {
-        authorization_endpoint: String::from("TODO"),
+        authorization_endpoint: discovery_result.public_authorization_endpoint,
         client_credentials: client_credentials.deref().clone(),
         verification_key: Some(discovery_result.verification_key),
-        issuer: String::from("TODO"),
-        issuing_key: None,
+        issuer: discovery_result.issuer,
+        issuing_key: Some(discovery_result.signing_key),
     };
     client_token_thread(healthmap.clone(), oidc_client_state);
-    build_rocket_instance(healthmap, login_configuration)
+    build_rocket_instance(healthmap, login_configuration).attach(cors::Cors)
 }
 
+mod cors;
 mod oidcclient;
+
 #[cfg(test)]
 mod tests;

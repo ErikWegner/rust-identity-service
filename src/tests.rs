@@ -260,6 +260,8 @@ mod callback {
         Mock, MockServer, ResponseTemplate,
     };
 
+    use crate::load_key;
+
     use super::{build_rocket_test_instance, random_string};
 
     /** A token from the remote authentication system is signed with this key */
@@ -268,13 +270,6 @@ mod callback {
     /** A self issued token is signed with this key */
     const UNITTEST_ISSUER_KEYFILE: &str = "./test2.pem";
     const UNITTEST_ISSUER_PUBKEYFILE: &str = "./testpublic2.pem";
-
-    fn load_key(keypath: &str) -> String {
-        let mut key_file = File::open(keypath).unwrap();
-        let mut key = String::new();
-        key_file.read_to_string(&mut key).unwrap();
-        key
-    }
 
     fn new_token(user_id: &str, iss: &str) -> String {
         let key = PKeyWithDigest {
