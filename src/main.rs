@@ -16,6 +16,7 @@ use openssl::pkey::{PKey, Private, Public};
 use openssl::x509::X509;
 use rocket::form::Form;
 use rocket::response::Redirect;
+use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::{
     http::Status,
@@ -256,11 +257,18 @@ struct CallbackData<'r> {
     code: &'r str,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct JwtResponse {
+    access_token: String,
+    token_type: String,
+}
+
 #[post("/callback", data = "<user_input>")]
 async fn callback(
     user_input: Option<Form<CallbackData<'_>>>,
     state_login_configuration: &State<LoginConfiguration>,
-) -> Result<String, status::Custom<content::Json<String>>> {
+) -> Result<Json<JwtResponse>, status::Custom<content::Json<String>>> {
     if user_input.is_none() {
         return Err(status::Custom(
             Status::BadRequest,
@@ -300,11 +308,15 @@ async fn callback(
                 Ok(tokendata) => {
                     let claims = tokendata.claims();
                     let subject = claims.registered.subject.as_ref().unwrap().as_str();
-                    Ok(create_token_string(
-                        login_configuration.issuer.as_str(),
-                        subject,
-                        &login_configuration.issuing_key.unwrap(),
-                    ))
+
+                    Ok(Json(JwtResponse {
+                        access_token: create_token_string(
+                            login_configuration.issuer.as_str(),
+                            subject,
+                            &login_configuration.issuing_key.unwrap(),
+                        ),
+                        token_type: "Bearer".to_string(),
+                    }))
                 }
             }
         }
