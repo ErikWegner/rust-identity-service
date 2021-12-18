@@ -1,34 +1,194 @@
-mod oidcclient;
-mod redisconn;
+use std::collections::BTreeMap;
+use std::env;
+use std::fs::File;
+use std::io::Read;
+use std::ops::Deref;
+use std::time::Duration;
+use std::{collections::HashMap, sync::Arc};
 
-use crossbeam::channel::{unbounded, Receiver, Sender};
-use oidcclient::{
-    get_auth_token, make_client_credentials_request_to_oidc_provider, request_mutex,
-    ClientCredentials, HolderState, TokenData,
-};
-use parking_lot::{Condvar, Mutex};
-use std::{
-    sync::Arc,
-    thread,
-    time::{SystemTime, UNIX_EPOCH},
-};
-
-use crate::redisconn::get_redis_connection;
-pub(crate) use dotenv::dotenv;
-use redisconn::DataProvider;
-use ridser::{cfg::RuntimeConfiguration, construct_redirect_uri, init_openid_provider};
+use dashmap::DashMap;
+use dotenv::dotenv;
+use jwt::{Claims, PKeyWithDigest, SigningAlgorithm, Token, VerifyWithKey};
+use jwt::{Header, SignWithKey};
+use oidcclient::{acg_flow_step_2, get_client_token, ClientCredentials, OidcClientState};
+use openssl::hash::MessageDigest;
+use openssl::pkey::{PKey, Private, Public};
+use openssl::x509::X509;
+use rocket::form::Form;
+use rocket::response::Redirect;
+use rocket::serde::{Deserialize, Serialize};
 use rocket::{
     http::Status,
-    response::{content, status, Redirect},
-    serde::json::Json,
+    response::{content, status},
     Build, Rocket, State,
 };
+use tokio::time::sleep;
 
 #[macro_use]
 extern crate rocket;
 
-struct SharedRedis {
-    redis: Arc<futures::lock::Mutex<Box<dyn DataProvider>>>,
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct ErrorMessageResponse {
+    message: String,
+}
+
+type HealthMap = DashMap<String, String>;
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct HealthResponse {
+    faults: HashMap<String, String>,
+}
+
+struct LoginConfiguration {
+    authorization_endpoint: String,
+    client_credentials: ClientCredentials,
+    verification_key: Option<PKeyWithDigest<Public>>,
+    issuer: String,
+    issuing_key: Option<PKeyWithDigest<Private>>,
+}
+
+impl Clone for LoginConfiguration {
+    fn clone(&self) -> Self {
+        Self {
+            authorization_endpoint: self.authorization_endpoint.clone(),
+            client_credentials: self.client_credentials.clone(),
+            verification_key: self.verification_key.as_ref().map(|vk| PKeyWithDigest {
+                digest: vk.digest,
+                key: vk.key.clone(),
+            }),
+            issuer: self.issuer.clone(),
+            issuing_key: self.issuing_key.as_ref().map(|i| PKeyWithDigest {
+                digest: i.digest,
+                key: i.key.clone(),
+            }),
+        }
+    }
+}
+
+fn construct_redirect_uri(
+    login_configuration: LoginConfiguration,
+    client_id: String,
+    state: String,
+    redirect_uri: String,
+) -> String {
+    String::from(
+        url::Url::parse_with_params(
+            &(login_configuration.authorization_endpoint),
+            &[
+                ("response_type", "code"),
+                ("client_id", client_id.as_str()),
+                ("redirect_uri", redirect_uri.as_str()),
+                ("scope", "openid"),
+                ("state", state.as_str()),
+            ],
+        )
+        .unwrap()
+        .as_str(),
+    )
+}
+
+fn create_token_string(issuer: &str, subject: &str, key: &impl SigningAlgorithm) -> String {
+    let mut claims = BTreeMap::new();
+    claims.insert("iss", issuer);
+    claims.insert("sub", subject);
+
+    claims.sign_with_key(key).unwrap()
+}
+
+#[derive(Deserialize)]
+struct OpenIdConfiguration {
+    authorization_endpoint: String,
+    token_endpoint: String,
+    jwks_uri: String,
+}
+
+#[derive(Deserialize)]
+struct CertsX5CResponse {
+    r#use: String,
+    x5c: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct CertsResponse {
+    keys: Vec<CertsX5CResponse>,
+}
+
+struct EnvAndDiscoveryResult {
+    internal_client_id: String,
+    internal_client_secret: String,
+    issuer: String,
+    public_authorization_endpoint: String,
+    signing_key: PKeyWithDigest<Private>,
+    token_endpoint: String,
+    verification_key: PKeyWithDigest<Public>,
+}
+
+async fn init_env() -> EnvAndDiscoveryResult {
+    let internal_client_id =
+        env::var("RIDSER_CLIENT_ID").expect("Value for RIDSER_CLIENT_ID is not set.");
+    let internal_client_secret =
+        env::var("RIDSER_CLIENT_SECRET").expect("Value for RIDSER_CLIENT_SECRET is not set.");
+    let issuer = env::var("RIDSER_ISSUER").expect("Value for RIDSER_ISSUER is not set.");
+    let key_filename =
+        env::var("RIDSER_SIGNING_KEY_FILE").expect("Value for RIDSER_SIGNING_KEY_FILE is not set.");
+    let signing_key = PKeyWithDigest {
+        digest: MessageDigest::sha256(),
+        key: PKey::private_key_from_pem(load_key(key_filename.as_str()).as_bytes()).unwrap(),
+    };
+    let dicovery_endpoint =
+        env::var("RIDSER_METADATA_URL").expect("Value for RIDSER_METADATA_URL is not set.");
+    let openid_configuration = reqwest::get(&dicovery_endpoint)
+        .await
+        .unwrap_or_else(|_| panic!("Endpoint {} could not be loaded", dicovery_endpoint))
+        .json::<OpenIdConfiguration>()
+        .await
+        .unwrap_or_else(|_| panic!("Could not parse response from {}", dicovery_endpoint));
+    let certs_uri = openid_configuration.jwks_uri;
+    let certs_response = reqwest::get(&certs_uri)
+        .await
+        .unwrap_or_else(|_| panic!("Certificates could not be loaded from {}", certs_uri))
+        .json::<CertsResponse>()
+        .await
+        .unwrap_or_else(|_| panic!("Could not parse response from {}", certs_uri));
+    let certs_key = certs_response
+        .keys
+        .iter()
+        .find_map(|f| {
+            if f.r#use == "sig" {
+                Some(format!(
+                    "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+                    f.x5c[0]
+                ))
+            } else {
+                None
+            }
+        })
+        .expect("No verification key provided");
+    let x509 = X509::from_pem(certs_key.as_bytes()).expect("Verification key parser error");
+    let x509_public_key = x509.public_key();
+    let verification_key = PKeyWithDigest {
+        digest: MessageDigest::sha256(),
+        key: x509_public_key.expect("Verification key invalid"),
+    };
+    EnvAndDiscoveryResult {
+        internal_client_id,
+        internal_client_secret,
+        issuer,
+        public_authorization_endpoint: env::var("RIDSER_PUBLIC_AUTHORIZATION_URL")
+            .unwrap_or_else(|_| openid_configuration.authorization_endpoint.clone()),
+        signing_key,
+        token_endpoint: openid_configuration.token_endpoint,
+        verification_key,
+    }
+}
+
+fn load_key(keypath: &str) -> String {
+    let mut key_file = File::open(keypath).unwrap();
+    let mut key = String::new();
+    key_file.read_to_string(&mut key).unwrap();
+    key
 }
 
 #[get("/up")]
@@ -37,27 +197,31 @@ fn up() -> &'static str {
 }
 
 #[get("/health")]
-async fn health(
-    shared_con: &State<SharedRedis>,
-) -> Result<&'static str, status::Custom<content::Json<&'static str>>> {
-    // TODO: redis::ConnectionLike.check_connection()
-    let lockable_redis = Arc::clone(&shared_con.redis);
-    let mut lock = lockable_redis.lock().await;
-    if !(lock.check_connection().await) {
-        return Err(status::Custom(
-            Status::InternalServerError,
-            content::Json("{\"message\": \"redis disconnected\"}"),
-        ));
+fn health(
+    healthmap: &State<Arc<HealthMap>>,
+) -> Result<&'static str, status::Custom<content::Json<String>>> {
+    let healthmap_iter = healthmap.iter();
+    let faults = healthmap_iter
+        .filter(|e| e.value() != "OK")
+        .map(|e| (e.key().clone(), e.value().clone()))
+        .collect::<HashMap<_, _>>();
+
+    if faults.is_empty() {
+        return Ok("OK");
     }
-    Ok("OK")
+    let j = HealthResponse { faults };
+    Err(status::Custom(
+        Status::BadGateway,
+        content::Json(serde_json::to_string(&j).unwrap()),
+    ))
 }
 
-#[get("/login?<client_id>&<state>")]
+#[get("/login?<client_id>&<state>&<redirect_uri>")]
 async fn login(
     client_id: Option<String>,
     state: Option<String>,
-    rc: &State<RuntimeConfiguration>,
-    shared_con: &State<SharedRedis>,
+    redirect_uri: Option<String>,
+    state_login_configuration: &State<LoginConfiguration>,
 ) -> Result<Redirect, status::Custom<content::Json<&'static str>>> {
     if client_id.is_none() {
         return Err(status::Custom(
@@ -65,145 +229,109 @@ async fn login(
             content::Json("{\"message\": \"client_id is missing\"}"),
         ));
     }
-    let lockable_redis = Arc::clone(&shared_con.redis);
-    let mut lock = lockable_redis.lock().await;
-    let _: () = lock
-        .set_int("my_key".to_string(), 42)
-        .await
-        .unwrap_or_else(|_| panic!("Could not write to cache."));
+    if state.is_none() {
+        return Err(status::Custom(
+            Status::BadRequest,
+            content::Json("{\"message\": \"state is missing\"}"),
+        ));
+    }
+    if redirect_uri.is_none() {
+        return Err(status::Custom(
+            Status::BadRequest,
+            content::Json("{\"message\": \"redirect_uri is missing\"}"),
+        ));
+    }
+    let login_configuration: LoginConfiguration = state_login_configuration.deref().clone();
     Ok(Redirect::to(construct_redirect_uri(
-        rc,
-        client_id.unwrap().as_str(),
-        state.unwrap().as_str(),
+        login_configuration,
+        client_id.unwrap(),
+        state.unwrap(),
+        redirect_uri.unwrap(),
     )))
 }
 
-#[post("/callback")]
-async fn callback(
-    managed_mutex: &State<Arc<(Mutex<HolderState>, Condvar)>>,
-    managed_sender: &State<Sender<u8>>,
-) -> Result<Json<TokenData>, status::Custom<content::Json<String>>> {
-    let mutex = managed_mutex.inner().clone();
-    let s = managed_sender.inner().clone();
-    let t = get_auth_token(mutex, s).await;
+#[derive(FromForm)]
+struct CallbackData<'r> {
+    redirect_uri: &'r str,
+    code: &'r str,
+}
 
-    match t {
-        Ok(r) => Ok(Json(r)),
-        Err(msg) => Err(status::Custom(
-            Status::InternalServerError,
-            content::Json(format!("{{\"message\": \"{}\"}}", msg)),
-        )),
+#[post("/callback", data = "<user_input>")]
+async fn callback(
+    user_input: Option<Form<CallbackData<'_>>>,
+    state_login_configuration: &State<LoginConfiguration>,
+) -> Result<String, status::Custom<content::Json<String>>> {
+    if user_input.is_none() {
+        return Err(status::Custom(
+            Status::BadRequest,
+            content::Json("{\"message\": \"cannot parse body\"}".to_string()),
+        ));
+    }
+    let g = user_input.unwrap();
+    let login_configuration: LoginConfiguration = state_login_configuration.deref().clone();
+    let res = acg_flow_step_2(
+        login_configuration.client_credentials,
+        g.redirect_uri.to_string(),
+        g.code.to_string(),
+    )
+    .await;
+    match res {
+        Err(e) => {
+            let emr = ErrorMessageResponse { message: e.1 };
+            Err(status::Custom(
+                Status::from_code(e.0).unwrap_or(Status::InternalServerError),
+                content::Json(serde_json::to_string(&emr).unwrap()),
+            ))
+        }
+        Ok(internal_token) => {
+            let token: Result<Token<Header, Claims, _>, jwt::Error> = internal_token
+                .as_str()
+                .verify_with_key(&login_configuration.verification_key.unwrap());
+            match token {
+                Err(e) => {
+                    let emr = ErrorMessageResponse {
+                        message: e.to_string(),
+                    };
+                    Err(status::Custom(
+                        Status::InternalServerError,
+                        content::Json(serde_json::to_string(&emr).unwrap()),
+                    ))
+                }
+                Ok(tokendata) => {
+                    let claims = tokendata.claims();
+                    let subject = claims.registered.subject.as_ref().unwrap().as_str();
+                    Ok(create_token_string(
+                        login_configuration.issuer.as_str(),
+                        subject,
+                        &login_configuration.issuing_key.unwrap(),
+                    ))
+                }
+            }
+        }
     }
 }
 
 fn build_rocket_instance(
-    rc: RuntimeConfiguration,
-    conn: Box<dyn DataProvider>,
-    mutex: Arc<(Mutex<HolderState>, Condvar)>,
-    sender: Sender<u8>,
+    healthmap: Arc<HealthMap>,
+    login_configuration: LoginConfiguration,
 ) -> Rocket<Build> {
     rocket::build()
-        .manage(rc)
-        .manage(SharedRedis {
-            redis: Arc::new(futures::lock::Mutex::new(conn)),
-        })
-        .manage(mutex)
-        .manage(sender)
+        .manage(healthmap)
+        .manage(login_configuration)
         .mount("/", routes![up, health, login, callback])
 }
 
-fn start_client_thread(
-    r: Receiver<u8>,
-    mutex: Arc<(Mutex<HolderState>, Condvar)>,
-    client_credentials: ClientCredentials,
-) {
-    thread::spawn(move || {
-        let mut last_request: u64 = 0;
+fn client_token_thread(healthmap: Arc<HealthMap>, oidc_client_state_p: Arc<OidcClientState>) {
+    let threadhealthmap = healthmap;
+    let oidc_client_state = oidc_client_state_p;
+    tokio::spawn(async move {
+        let key = "oidclogin".to_string();
         loop {
-            let _ = r.recv();
-            let &(ref lock, ref cvar) = &*mutex;
-            let mut state = lock.lock();
-
-            match (*state).clone() {
-                HolderState::Empty => {
-                    *state = HolderState::RequestPending;
-                    drop(state);
-                    last_request = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-                    let token_result = make_client_credentials_request_to_oidc_provider(
-                        client_credentials.clone(),
-                    );
-                    let mut state = lock.lock();
-                    *state = match token_result {
-                        Ok(tokenvalue) => HolderState::HasToken { token: tokenvalue },
-                        Err(_) => HolderState::Empty,
-                    };
-                    cvar.notify_all();
-                    drop(state);
-                }
-                HolderState::RequestPending => {
-                    let now_seconds = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-                    println!(
-                        "pending since: {}\nwaiting until: {}\nnow          : {}",
-                        last_request,
-                        last_request + 15,
-                        now_seconds
-                    );
-                    if last_request + 15 < now_seconds {
-                        println!("Reset state");
-                        *state = HolderState::Empty;
-                        cvar.notify_all();
-                    }
-                    drop(state)
-                }
-                HolderState::HasToken { token } => {
-                    *state = HolderState::HasTokenIsRefreshing {
-                        token: token.clone(),
-                    };
-                    drop(state);
-                    last_request = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-                    let token_result = make_client_credentials_request_to_oidc_provider(
-                        client_credentials.clone(),
-                    );
-                    let mut state = lock.lock();
-                    if let Ok(token_result) = token_result {
-                        *state = HolderState::HasToken {
-                            token: token_result,
-                        };
-                    } else {
-                        let now_seconds = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs();
-
-                        if token.expires >= now_seconds {
-                            *state = HolderState::Empty
-                        }
-                    }
-                    cvar.notify_all();
-                    drop(state);
-                }
-                HolderState::HasTokenIsRefreshing { token } => {
-                    let now_seconds = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-
-                    if token.expires >= now_seconds {
-                        *state = HolderState::Empty
-                    }
-                    cvar.notify_all();
-                    drop(state);
-                }
-            }
+            let _ = get_client_token(&oidc_client_state).await;
+            threadhealthmap.insert(key.clone(), "OK".to_string());
+            sleep(Duration::from_secs(2)).await;
+            threadhealthmap.insert(key.clone(), "login failed".to_string());
+            sleep(Duration::from_secs(2)).await;
         }
     });
 }
@@ -211,25 +339,27 @@ fn start_client_thread(
 #[launch]
 async fn rocket() -> _ {
     dotenv().ok();
-    let rc = init_openid_provider().unwrap();
-    let conn = get_redis_connection().await.expect("Redis failed");
-    let mutex = request_mutex();
-    let (s, r) = unbounded::<u8>();
-    let rocket_instance = build_rocket_instance(rc.clone(), Box::new(conn), mutex.clone(), s);
-    start_client_thread(
-        r,
-        mutex,
-        ClientCredentials {
-            client_id: rc.client_id,
-            client_secret: rc.client_secret,
-            token_url: rc.token_url,
-        },
-    );
-    rocket_instance
+    let discovery_result = init_env().await;
+    let healthmap = Arc::new(HealthMap::new());
+    let client_credentials = Arc::new(ClientCredentials {
+        client_id: discovery_result.internal_client_id,
+        client_secret: discovery_result.internal_client_secret,
+        token_url: discovery_result.token_endpoint,
+    });
+    let oidc_client_state = Arc::new(OidcClientState::init(&client_credentials));
+    let login_configuration = LoginConfiguration {
+        authorization_endpoint: discovery_result.public_authorization_endpoint,
+        client_credentials: client_credentials.deref().clone(),
+        verification_key: Some(discovery_result.verification_key),
+        issuer: discovery_result.issuer,
+        issuing_key: Some(discovery_result.signing_key),
+    };
+    client_token_thread(healthmap.clone(), oidc_client_state);
+    build_rocket_instance(healthmap, login_configuration).attach(cors::Cors)
 }
 
-#[cfg(test)]
-mod redismock;
+mod cors;
+mod oidcclient;
 
 #[cfg(test)]
 mod tests;
