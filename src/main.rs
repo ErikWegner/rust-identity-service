@@ -1,14 +1,13 @@
-use std::collections::BTreeMap;
 use std::env;
 use std::fs::File;
 use std::io::Read;
 use std::ops::Deref;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashMap;
 use dotenv::dotenv;
-use jwt::{Claims, PKeyWithDigest, SigningAlgorithm, Token, VerifyWithKey};
+use jwt::{Claims, PKeyWithDigest, RegisteredClaims, SigningAlgorithm, Token, VerifyWithKey};
 use jwt::{Header, SignWithKey};
 use oidcclient::{acg_flow_step_2, get_client_token, ClientCredentials, OidcClientState};
 use openssl::hash::MessageDigest;
@@ -90,10 +89,21 @@ fn construct_redirect_uri(
     )
 }
 
-fn create_token_string(issuer: &str, subject: &str, key: &impl SigningAlgorithm) -> String {
-    let mut claims = BTreeMap::new();
-    claims.insert("iss", issuer);
-    claims.insert("sub", subject);
+fn create_token_string(issuer: String, subject: String, key: &impl SigningAlgorithm) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let expires = now + 20 * 60;
+    let claims = Claims::new(RegisteredClaims {
+        issuer: Some(issuer),
+        subject: Some(subject),
+        audience: None,
+        expiration: Some(expires),
+        not_before: Some(now),
+        issued_at: Some(now),
+        json_web_token_id: None,
+    });
 
     claims.sign_with_key(key).unwrap()
 }
@@ -307,11 +317,11 @@ async fn callback(
                 }
                 Ok(tokendata) => {
                     let claims = tokendata.claims();
-                    let subject = claims.registered.subject.as_ref().unwrap().as_str();
+                    let subject = claims.registered.subject.as_ref().unwrap().clone();
 
                     Ok(Json(JwtResponse {
                         access_token: create_token_string(
-                            login_configuration.issuer.as_str(),
+                            login_configuration.issuer,
                             subject,
                             &login_configuration.issuing_key.unwrap(),
                         ),
