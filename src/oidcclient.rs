@@ -83,6 +83,11 @@ pub(crate) async fn get_client_token(
 
     drop(pending_request);
     let result = fut.await;
+
+    let mut pending_request = oidc_client_state.mutex.lock().await;
+    *pending_request = None;
+    drop(pending_request);
+
     result
 }
 

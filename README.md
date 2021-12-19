@@ -3,7 +3,7 @@
 
 ## Generate key
 
-    openssl genrsa -out local.key 2048
+    openssl genrsa -out local.pem 2048
 
 ## Reexport keycloak realm
 

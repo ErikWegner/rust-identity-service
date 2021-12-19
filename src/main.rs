@@ -184,7 +184,8 @@ async fn init_env() -> EnvAndDiscoveryResult {
 }
 
 fn load_key(keypath: &str) -> String {
-    let mut key_file = File::open(keypath).unwrap();
+    let mut key_file =
+        File::open(keypath).unwrap_or_else(|_| panic!("Loading file {} failed", keypath));
     let mut key = String::new();
     key_file.read_to_string(&mut key).unwrap();
     key
@@ -332,23 +333,34 @@ fn build_rocket_instance(
         .mount("/", routes![up, health, login, callback])
 }
 
-fn client_token_thread(healthmap: Arc<HealthMap>, oidc_client_state_p: Arc<OidcClientState>) {
+fn client_token_thread(
+    healthmap: Arc<HealthMap>,
+    oidc_client_state_p: Arc<OidcClientState>,
+    verification_key: Arc<PKeyWithDigest<Public>>,
+) {
     let threadhealthmap = healthmap;
     let oidc_client_state = oidc_client_state_p;
     let mut next_retrieval_time: u64 = 0;
     tokio::spawn(async move {
         let key = "oidclogin".to_string();
         loop {
-            let token_result = get_client_token(oidc_client_state.clone()).await;
-            match token_result {
-                Ok(token) => {
-                    threadhealthmap.insert(key.clone(), "OK".to_string());
-                    next_retrieval_time = calc_next_retrieval_time(token.as_str(), todo!());
-                }
-                Err(m) => {
-                    threadhealthmap.insert(key.clone(), m);
-                }
-            };
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            if now >= next_retrieval_time {
+                let token_result = get_client_token(oidc_client_state.clone()).await;
+                match token_result {
+                    Ok(token) => {
+                        threadhealthmap.insert(key.clone(), "OK".to_string());
+                        next_retrieval_time =
+                            calc_next_retrieval_time(token.as_str(), &verification_key);
+                    }
+                    Err(m) => {
+                        threadhealthmap.insert(key.clone(), m);
+                    }
+                };
+            }
             sleep(Duration::from_secs(2)).await;
         }
     });
@@ -357,7 +369,7 @@ fn client_token_thread(healthmap: Arc<HealthMap>, oidc_client_state_p: Arc<OidcC
 fn calc_next_retrieval_time(token: &str, verification_key: &PKeyWithDigest<Public>) -> u64 {
     let r: Result<Token<Header, Claims, _>, jwt::Error> = token.verify_with_key(verification_key);
     // Substract ten seconds from expiration time
-    r.ok().unwrap().claims().registered.expiration.unwrap() - 10 * 60
+    r.ok().unwrap().claims().registered.expiration.unwrap() - 10
 }
 
 #[launch]
@@ -375,11 +387,11 @@ async fn rocket() -> _ {
     let login_configuration = LoginConfiguration {
         authorization_endpoint: discovery_result.public_authorization_endpoint,
         client_credentials,
-        verification_key: verification_key_arc,
+        verification_key: verification_key_arc.clone(),
         issuer: discovery_result.issuer,
         issuing_key: discovery_result.signing_key,
     };
-    client_token_thread(healthmap.clone(), oidc_client_state);
+    client_token_thread(healthmap.clone(), oidc_client_state, verification_key_arc);
     build_rocket_instance(healthmap, Arc::new(login_configuration)).attach(cors::Cors)
 }
 
