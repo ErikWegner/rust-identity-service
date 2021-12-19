@@ -41,37 +41,25 @@ struct HealthResponse {
     faults: HashMap<String, String>,
 }
 
-struct LoginConfiguration {
+pub(crate) struct LoginConfiguration {
     authorization_endpoint: String,
-    client_credentials: ClientCredentials,
-    verification_key: Option<PKeyWithDigest<Public>>,
+    client_credentials: Arc<ClientCredentials>,
+    verification_key: Arc<PKeyWithDigest<Public>>,
     issuer: String,
-    issuing_key: Option<PKeyWithDigest<Private>>,
+    issuing_key: PKeyWithDigest<Private>,
 }
 
-impl Clone for LoginConfiguration {
-    fn clone(&self) -> Self {
-        Self {
-            authorization_endpoint: self.authorization_endpoint.clone(),
-            client_credentials: self.client_credentials.clone(),
-            verification_key: self.verification_key.as_ref().map(|vk| PKeyWithDigest {
-                digest: vk.digest,
-                key: vk.key.clone(),
-            }),
-            issuer: self.issuer.clone(),
-            issuing_key: self.issuing_key.as_ref().map(|i| PKeyWithDigest {
-                digest: i.digest,
-                key: i.key.clone(),
-            }),
-        }
+impl LoginConfiguration {
+    fn cc(&self) -> Arc<ClientCredentials> {
+        self.client_credentials.clone()
     }
 }
 
 fn construct_redirect_uri(
-    login_configuration: LoginConfiguration,
-    client_id: String,
-    state: String,
-    redirect_uri: String,
+    login_configuration: &LoginConfiguration,
+    client_id: &String,
+    state: &String,
+    redirect_uri: &String,
 ) -> String {
     String::from(
         url::Url::parse_with_params(
@@ -89,15 +77,15 @@ fn construct_redirect_uri(
     )
 }
 
-fn create_token_string(issuer: String, subject: String, key: &impl SigningAlgorithm) -> String {
+fn create_token_string(issuer: &String, subject: &String, key: &impl SigningAlgorithm) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
     let expires = now + 20 * 60;
     let claims = Claims::new(RegisteredClaims {
-        issuer: Some(issuer),
-        subject: Some(subject),
+        issuer: Some(issuer.clone()),
+        subject: Some(subject.clone()),
         audience: None,
         expiration: Some(expires),
         not_before: Some(now),
@@ -232,7 +220,7 @@ async fn login(
     client_id: Option<String>,
     state: Option<String>,
     redirect_uri: Option<String>,
-    state_login_configuration: &State<LoginConfiguration>,
+    state_login_configuration: &State<Arc<LoginConfiguration>>,
 ) -> Result<Redirect, status::Custom<content::Json<&'static str>>> {
     if client_id.is_none() {
         return Err(status::Custom(
@@ -252,12 +240,12 @@ async fn login(
             content::Json("{\"message\": \"redirect_uri is missing\"}"),
         ));
     }
-    let login_configuration: LoginConfiguration = state_login_configuration.deref().clone();
+    let login_configuration = state_login_configuration.deref();
     Ok(Redirect::to(construct_redirect_uri(
         login_configuration,
-        client_id.unwrap(),
-        state.unwrap(),
-        redirect_uri.unwrap(),
+        &client_id.unwrap(),
+        &state.unwrap(),
+        &redirect_uri.unwrap(),
     )))
 }
 
@@ -277,7 +265,7 @@ struct JwtResponse {
 #[post("/callback", data = "<user_input>")]
 async fn callback(
     user_input: Option<Form<CallbackData<'_>>>,
-    state_login_configuration: &State<LoginConfiguration>,
+    state_login_configuration: &State<Arc<LoginConfiguration>>,
 ) -> Result<Json<JwtResponse>, status::Custom<content::Json<String>>> {
     if user_input.is_none() {
         return Err(status::Custom(
@@ -286,9 +274,9 @@ async fn callback(
         ));
     }
     let g = user_input.unwrap();
-    let login_configuration: LoginConfiguration = state_login_configuration.deref().clone();
+    let login_configuration = state_login_configuration.deref().clone();
     let res = acg_flow_step_2(
-        login_configuration.client_credentials,
+        &login_configuration.cc(),
         g.redirect_uri.to_string(),
         g.code.to_string(),
     )
@@ -302,9 +290,9 @@ async fn callback(
             ))
         }
         Ok(internal_token) => {
-            let token: Result<Token<Header, Claims, _>, jwt::Error> = internal_token
-                .as_str()
-                .verify_with_key(&login_configuration.verification_key.unwrap());
+            let verification_key = login_configuration.verification_key.deref();
+            let token: Result<Token<Header, Claims, _>, jwt::Error> =
+                internal_token.as_str().verify_with_key(verification_key);
             match token {
                 Err(e) => {
                     let emr = ErrorMessageResponse {
@@ -317,13 +305,14 @@ async fn callback(
                 }
                 Ok(tokendata) => {
                     let claims = tokendata.claims();
-                    let subject = claims.registered.subject.as_ref().unwrap().clone();
+                    let subject = claims.registered.subject.as_ref().unwrap();
+                    let issuing_key = &login_configuration.issuing_key;
 
                     Ok(Json(JwtResponse {
                         access_token: create_token_string(
-                            login_configuration.issuer,
+                            &login_configuration.issuer,
                             subject,
-                            &login_configuration.issuing_key.unwrap(),
+                            issuing_key,
                         ),
                         token_type: "Bearer".to_string(),
                     }))
@@ -335,7 +324,7 @@ async fn callback(
 
 fn build_rocket_instance(
     healthmap: Arc<HealthMap>,
-    login_configuration: LoginConfiguration,
+    login_configuration: Arc<LoginConfiguration>,
 ) -> Rocket<Build> {
     rocket::build()
         .manage(healthmap)
@@ -346,16 +335,29 @@ fn build_rocket_instance(
 fn client_token_thread(healthmap: Arc<HealthMap>, oidc_client_state_p: Arc<OidcClientState>) {
     let threadhealthmap = healthmap;
     let oidc_client_state = oidc_client_state_p;
+    let mut next_retrieval_time: u64 = 0;
     tokio::spawn(async move {
         let key = "oidclogin".to_string();
         loop {
-            let _ = get_client_token(&oidc_client_state).await;
-            threadhealthmap.insert(key.clone(), "OK".to_string());
-            sleep(Duration::from_secs(2)).await;
-            threadhealthmap.insert(key.clone(), "login failed".to_string());
+            let token_result = get_client_token(oidc_client_state.clone()).await;
+            match token_result {
+                Ok(token) => {
+                    threadhealthmap.insert(key.clone(), "OK".to_string());
+                    next_retrieval_time = calc_next_retrieval_time(token.as_str(), todo!());
+                }
+                Err(m) => {
+                    threadhealthmap.insert(key.clone(), m);
+                }
+            };
             sleep(Duration::from_secs(2)).await;
         }
     });
+}
+
+fn calc_next_retrieval_time(token: &str, verification_key: &PKeyWithDigest<Public>) -> u64 {
+    let r: Result<Token<Header, Claims, _>, jwt::Error> = token.verify_with_key(verification_key);
+    // Substract ten seconds from expiration time
+    r.ok().unwrap().claims().registered.expiration.unwrap() - 10 * 60
 }
 
 #[launch]
@@ -368,16 +370,17 @@ async fn rocket() -> _ {
         client_secret: discovery_result.internal_client_secret,
         token_url: discovery_result.token_endpoint,
     });
-    let oidc_client_state = Arc::new(OidcClientState::init(&client_credentials));
+    let oidc_client_state = Arc::new(OidcClientState::new(client_credentials.clone()));
+    let verification_key_arc = Arc::new(discovery_result.verification_key);
     let login_configuration = LoginConfiguration {
         authorization_endpoint: discovery_result.public_authorization_endpoint,
-        client_credentials: client_credentials.deref().clone(),
-        verification_key: Some(discovery_result.verification_key),
+        client_credentials,
+        verification_key: verification_key_arc,
         issuer: discovery_result.issuer,
-        issuing_key: Some(discovery_result.signing_key),
+        issuing_key: discovery_result.signing_key,
     };
     client_token_thread(healthmap.clone(), oidc_client_state);
-    build_rocket_instance(healthmap, login_configuration).attach(cors::Cors)
+    build_rocket_instance(healthmap, Arc::new(login_configuration)).attach(cors::Cors)
 }
 
 mod cors;

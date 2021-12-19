@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::oidcclient::{get_client_token, ClientCredentials, OidcClientState};
-use crate::{build_rocket_instance, HealthMap, LoginConfiguration};
+use crate::{build_rocket_instance, load_key, HealthMap, LoginConfiguration};
 
 use super::rocket;
 use jwt::PKeyWithDigest;
@@ -16,10 +16,17 @@ use tokio_test::assert_ok;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+/** A token from the remote authentication system is signed with this key */
+const UNITTEST_TRUSTED_KEYFILE: &str = "./test.pem";
+const UNITTEST_TRUSTED_PUBKEYFILE: &str = "./testpublic.pem";
+/** A self issued token is signed with this key */
+const UNITTEST_ISSUER_KEYFILE: &str = "./test2.pem";
+const UNITTEST_ISSUER_PUBKEYFILE: &str = "./testpublic2.pem";
+
 struct TestEnv {
     rocket: Rocket<Build>,
     health_map: Arc<HealthMap>,
-    login_configuration: LoginConfiguration,
+    login_configuration: Arc<LoginConfiguration>,
 }
 
 fn random_string(length: usize, prefix: Option<String>) -> String {
@@ -31,37 +38,34 @@ fn random_string(length: usize, prefix: Option<String>) -> String {
     format!("{}{}", prefix.unwrap_or_default(), rs)
 }
 
-fn build_rocket_test_instance(
-    token_url: Option<String>,
-    verification_key: Option<&String>,
-    issuer: &str,
-    issuing_key: Option<&String>,
-) -> TestEnv {
+fn build_rocket_test_instance(token_url: Option<String>, issuer: &str) -> TestEnv {
     let health_map = Arc::new(HealthMap::new());
-    let verification_key = verification_key.map(|key| PKeyWithDigest {
+    let verification_key_content = load_key(UNITTEST_TRUSTED_PUBKEYFILE);
+    let verification_key = Arc::new(PKeyWithDigest {
         digest: MessageDigest::sha256(),
-        key: PKey::public_key_from_pem(key.as_bytes()).unwrap(),
+        key: PKey::public_key_from_pem(verification_key_content.as_bytes()).unwrap(),
     });
-    let issuing_key = issuing_key.map(|key| PKeyWithDigest {
+    let issuing_key_content = load_key(UNITTEST_ISSUER_KEYFILE);
+    let issuing_key = PKeyWithDigest {
         digest: MessageDigest::sha256(),
-        key: PKey::private_key_from_pem(key.as_bytes()).unwrap(),
-    });
-    let login_configuration = LoginConfiguration {
+        key: PKey::private_key_from_pem(issuing_key_content.as_bytes()).unwrap(),
+    };
+    let login_configuration = Arc::new(LoginConfiguration {
         authorization_endpoint: format!(
             "{}/auth/login",
             random_string(64, Some(String::from("http://unit-test-url/")))
         ),
-        client_credentials: ClientCredentials {
+        client_credentials: Arc::new(ClientCredentials {
             token_url: token_url.unwrap_or_else(|| {
                 random_string(14, Some("http://unit-test-url/token/".to_string()))
             }),
             client_id: random_string(12, None),
             client_secret: random_string(24, Some("Secret".to_string())),
-        },
+        }),
         verification_key,
         issuer: String::from(issuer),
         issuing_key,
-    };
+    });
     TestEnv {
         rocket: build_rocket_instance(health_map.clone(), login_configuration.clone()),
         health_map,
@@ -71,7 +75,7 @@ fn build_rocket_test_instance(
 
 #[test]
 fn up() {
-    let t = build_rocket_test_instance(None, None, "unittest", None);
+    let t = build_rocket_test_instance(None, "unittest");
     let client = Client::tracked(t.rocket).expect("valid rocket instance");
     let response = client.get("/up").dispatch();
     assert_eq!(response.status(), Status::Ok);
@@ -80,7 +84,7 @@ fn up() {
 
 #[test]
 fn health_simple_ok() {
-    let t = build_rocket_test_instance(None, None, "unittest", None);
+    let t = build_rocket_test_instance(None, "unittest");
     t.health_map.clear();
     t.health_map.insert("con".to_string(), "OK".to_string());
     let client = Client::tracked(t.rocket).expect("valid rocket instance");
@@ -91,7 +95,7 @@ fn health_simple_ok() {
 
 #[test]
 fn health_simple_fail() {
-    let t = build_rocket_test_instance(None, None, "unittest", None);
+    let t = build_rocket_test_instance(None, "unittest");
     t.health_map.clear();
     t.health_map
         .insert("con".to_string(), "failed to connect".to_string());
@@ -111,12 +115,12 @@ fn retrieve_token_returns_token() {
     let mock_server = tokio_test::block_on(MockServer::start());
     let token_endpoint_path = random_string(12, Some("/provider/path-".to_string()));
     let token = random_string(12, None);
-    let client_credentials = ClientCredentials {
+    let client_credentials = Arc::new(ClientCredentials {
         client_id: "MockClient".to_string(),
         client_secret: "Mock Secret 123".to_string(),
         token_url: format!("{}{}", mock_server.uri(), token_endpoint_path),
-    };
-    let oidc_client_state = Arc::new(OidcClientState::init(&client_credentials));
+    });
+    let oidc_client_state = Arc::new(OidcClientState::new(client_credentials));
     tokio_test::block_on(
         Mock::given(method("POST"))
             .and(path(&token_endpoint_path))
@@ -125,7 +129,7 @@ fn retrieve_token_returns_token() {
     );
 
     // Act
-    let r = tokio_test::block_on(get_client_token(&oidc_client_state));
+    let r = tokio_test::block_on(get_client_token(oidc_client_state));
 
     // Assert
     assert_ok!(&r);
@@ -141,7 +145,7 @@ mod login {
     #[test]
     fn login_returns_redirect() {
         // Arrange
-        let t = build_rocket_test_instance(None, None, "unittest", None);
+        let t = build_rocket_test_instance(None, "unittest");
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
         let state = random_string(8, None);
         let client_id = random_string(32, None);
@@ -179,7 +183,7 @@ mod login {
     #[test]
     fn login_without_clientid_returns_bad_request() {
         // Arrange
-        let t = build_rocket_test_instance(None, None, "unittest", None);
+        let t = build_rocket_test_instance(None, "unittest");
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
         let state = random_string(8, None);
         let redirect_uri = String::from("https://front.end.server/auth/callback");
@@ -203,7 +207,7 @@ mod login {
     #[test]
     fn login_without_state_returns_bad_request() {
         // Arrange
-        let t = build_rocket_test_instance(None, None, "unittest", None);
+        let t = build_rocket_test_instance(None, "unittest");
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
         let client_id = random_string(32, None);
         let redirect_uri = String::from("https://front.end.server/auth/callback");
@@ -227,7 +231,7 @@ mod login {
     #[test]
     fn login_without_redirect_uri_returns_bad_request() {
         // Arrange
-        let t = build_rocket_test_instance(None, None, "unittest", None);
+        let t = build_rocket_test_instance(None, "unittest");
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
         let state = random_string(8, None);
         let client_id = random_string(32, None);
@@ -247,7 +251,7 @@ mod login {
 }
 
 mod callback {
-    use std::{collections::BTreeMap, fs::File, io::Read};
+    use std::collections::BTreeMap;
 
     use jwt::{AlgorithmType, Claims, Header, PKeyWithDigest, SignWithKey, Token, VerifyWithKey};
     use openssl::{hash::MessageDigest, pkey::PKey};
@@ -260,16 +264,9 @@ mod callback {
         Mock, MockServer, ResponseTemplate,
     };
 
-    use crate::load_key;
+    use crate::{load_key, tests::UNITTEST_ISSUER_PUBKEYFILE};
 
-    use super::{build_rocket_test_instance, random_string};
-
-    /** A token from the remote authentication system is signed with this key */
-    const UNITTEST_TRUSTED_KEYFILE: &str = "./test.pem";
-    const UNITTEST_TRUSTED_PUBKEYFILE: &str = "./testpublic.pem";
-    /** A self issued token is signed with this key */
-    const UNITTEST_ISSUER_KEYFILE: &str = "./test2.pem";
-    const UNITTEST_ISSUER_PUBKEYFILE: &str = "./testpublic2.pem";
+    use super::{build_rocket_test_instance, random_string, UNITTEST_TRUSTED_KEYFILE};
 
     fn new_token(user_id: &str, iss: &str) -> String {
         let key = PKeyWithDigest {
@@ -299,7 +296,7 @@ mod callback {
     #[test]
     fn callback_creates_bad_request_for_empty_body() {
         // Arrange
-        let t = build_rocket_test_instance(None, None, "unittest", None);
+        let t = build_rocket_test_instance(None, "unittest");
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
 
         // Act
@@ -332,8 +329,6 @@ mod callback {
             "{{\"access_token\":\"{}\"}}",
             new_token(&user_id, &external_issuer)
         );
-        let verification_key = load_key(UNITTEST_TRUSTED_PUBKEYFILE);
-        let issuing_key = load_key(UNITTEST_ISSUER_KEYFILE);
 
         let pubkey2 = PKeyWithDigest {
             digest: MessageDigest::sha256(),
@@ -348,9 +343,7 @@ mod callback {
         );
         let t = build_rocket_test_instance(
             Some(format!("{}{}", mock_server.uri(), token_endpoint_path)),
-            Some(&verification_key),
             second_issuer.as_str(),
-            Some(&issuing_key),
         );
         let client = Client::tracked(t.rocket).expect("valid rocket instance");
 
