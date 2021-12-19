@@ -1,23 +1,14 @@
-use std::{collections::HashMap, pin::Pin};
+use std::{collections::HashMap, pin::Pin, sync::Arc, time::Duration};
 
 use futures::{future::Shared, lock::Mutex, FutureExt};
+use parking_lot::RwLock;
 use reqwest::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub struct ClientCredentials {
     pub token_url: String,
     pub client_id: String,
     pub client_secret: String,
-}
-
-impl Clone for ClientCredentials {
-    fn clone(&self) -> Self {
-        Self {
-            token_url: self.token_url.clone(),
-            client_id: self.client_id.clone(),
-            client_secret: self.client_secret.clone(),
-        }
-    }
 }
 
 type Token = String;
@@ -28,60 +19,83 @@ type TokenRetriever = Shared<
 
 pub(crate) struct OidcClientState {
     mutex: Mutex<Option<TokenRetriever>>,
-    client_credentials: ClientCredentials,
+    client_credentials: Arc<ClientCredentials>,
+    pub(crate) query_token: RwLock<Option<String>>,
 }
 
 impl OidcClientState {
-    pub(crate) fn init(client_credentials: &ClientCredentials) -> OidcClientState {
+    pub(crate) fn new(client_credentials: Arc<ClientCredentials>) -> OidcClientState {
         OidcClientState {
             mutex: Mutex::new(None),
-            client_credentials: client_credentials.clone(),
+            client_credentials,
+            query_token: RwLock::new(None),
         }
+    }
+
+    fn arccc(&self) -> Arc<ClientCredentials> {
+        self.client_credentials.clone()
     }
 }
 
-#[derive(Deserialize)]
-struct TokenResponse {
-    access_token: String,
+#[derive(Serialize, Deserialize)]
+pub(crate) struct TokenResponse {
+    pub access_token: String,
 }
 
-async fn retrieve_token(client_credentials: ClientCredentials) -> Result<Token, String> {
-    let form = reqwest::multipart::Form::new()
-        .text("grant_type", "client_credentials")
-        .text("client_id", client_credentials.client_id.clone())
-        .text("client_secret", client_credentials.client_secret.clone())
-        .text("scope", "openid");
+async fn retrieve_token(client_credentials: Arc<ClientCredentials>) -> Result<Token, String> {
+    let mut form_data = HashMap::new();
+
+    form_data.insert("grant_type", "client_credentials");
+    form_data.insert("client_id", client_credentials.client_id.as_str());
+    form_data.insert("client_secret", client_credentials.client_secret.as_str());
+    form_data.insert("scope", "openid");
 
     let client = reqwest::Client::new();
     let res = client
         .post(client_credentials.token_url.clone())
-        .multipart(form)
+        .form(&form_data)
         .send()
         .await;
     match res {
-        Ok(o) => Ok(o.text().await.unwrap()),
+        Ok(o) => {
+            if o.status() != StatusCode::OK {
+                return Err(o.text().await.unwrap());
+            }
+            let token_response = o.json::<TokenResponse>().await;
+            match token_response {
+                Ok(tokendata) => Ok(tokendata.access_token),
+                Err(e) => Err(e.to_string()),
+            }
+        }
         Err(e) => Err(e.to_string()),
     }
 }
 
-pub(crate) async fn get_client_token(oidc_client_state: &OidcClientState) -> Result<Token, String> {
+pub(crate) async fn get_client_token(
+    oidc_client_state: Arc<OidcClientState>,
+) -> Result<Token, String> {
     let mut pending_request = oidc_client_state.mutex.lock().await;
+    let c = oidc_client_state.clone();
     let fut = if pending_request.is_some() {
         pending_request.clone().unwrap()
     } else {
-        let client_credentials = oidc_client_state.client_credentials.clone();
-        let token_request = retrieve_token(client_credentials).boxed().shared();
+        let token_request = retrieve_token(c.arccc()).boxed().shared();
         let _ = pending_request.insert(token_request.clone());
         token_request
     };
 
     drop(pending_request);
     let result = fut.await;
+
+    let mut pending_request = oidc_client_state.mutex.lock().await;
+    *pending_request = None;
+    drop(pending_request);
+
     result
 }
 
 pub(crate) async fn acg_flow_step_2(
-    client_credentials: ClientCredentials,
+    client_credentials: &ClientCredentials,
     redirect_uri: String,
     code: String,
 ) -> Result<Token, (u16, String)> {
@@ -118,5 +132,48 @@ pub(crate) async fn acg_flow_step_2(
                 .as_u16(),
             e.to_string(),
         )),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct GroupResponse {
+    name: String,
+    path: String,
+}
+
+pub(crate) async fn try_query_groups(
+    subject: &str,
+    group_query_url: &str,
+    token: &str,
+) -> Vec<String> {
+    let client = reqwest::Client::new();
+    let res = client
+        .get(group_query_url.replace("{SUBJECT}", subject))
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await;
+    match res {
+        Ok(o) => {
+            if o.status() != StatusCode::OK {
+                return Vec::new();
+            }
+            let od = o.json::<Vec<GroupResponse>>().await;
+            match od {
+                Ok(groups) => groups
+                    .iter()
+                    .filter_map(|f| {
+                        // Only use groups at level 1
+                        if f.path.rfind('/') == Some(0) {
+                            Some(f.name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            }
+        }
+        Err(_) => Vec::new(),
     }
 }

@@ -328,7 +328,31 @@
       } ]
     }
   },
-  "groups" : [ ],
+  "groups" : [ {
+    "id" : "1e1ca5a8-9162-43ff-b318-c7d293ca2441",
+    "name" : "Group1",
+    "path" : "/Group1",
+    "attributes" : { },
+    "realmRoles" : [ ],
+    "clientRoles" : { },
+    "subGroups" : [ ]
+  }, {
+    "id" : "475b26d8-398b-468d-b703-7d448987e1c3",
+    "name" : "Group2",
+    "path" : "/Group2",
+    "attributes" : { },
+    "realmRoles" : [ ],
+    "clientRoles" : { },
+    "subGroups" : [ ]
+  }, {
+    "id" : "728f03d2-cbe4-4b76-8332-237aa3c4fa71",
+    "name" : "Group3",
+    "path" : "/Group3",
+    "attributes" : { },
+    "realmRoles" : [ ],
+    "clientRoles" : { },
+    "subGroups" : [ ]
+  } ],
   "defaultRole" : {
     "id" : "8e1880f1-c388-43cb-b6bf-82b48a09bf04",
     "name" : "default-roles-multcorp",
@@ -397,7 +421,7 @@
     "requiredActions" : [ ],
     "realmRoles" : [ "default-roles-multcorp" ],
     "notBefore" : 0,
-    "groups" : [ ]
+    "groups" : [ "/Group1", "/Group2" ]
   } ],
   "scopeMappings" : [ {
     "clientScope" : "offline_access",
@@ -605,17 +629,18 @@
   }, {
     "id" : "a7336c56-ba7f-489e-992e-fed9abcfa7a9",
     "clientId" : "ridser",
+    "baseUrl" : "http://localhost:8030/",
     "surrogateAuthRequired" : false,
     "enabled" : true,
     "alwaysDisplayInConsole" : false,
     "clientAuthenticatorType" : "client-secret",
     "secret" : "8d476311-2577-4104-b9e4-7dc2cc381be8",
-    "redirectUris" : [ ],
+    "redirectUris" : [ "http://localhost:8030/callback.html" ],
     "webOrigins" : [ ],
     "notBefore" : 0,
     "bearerOnly" : false,
     "consentRequired" : false,
-    "standardFlowEnabled" : false,
+    "standardFlowEnabled" : true,
     "implicitFlowEnabled" : false,
     "directAccessGrantsEnabled" : false,
     "serviceAccountsEnabled" : true,
