@@ -35,8 +35,8 @@ impl OidcClientState {
 }
 
 #[derive(Deserialize)]
-struct TokenResponse {
-    access_token: String,
+pub(crate) struct TokenResponse {
+    pub access_token: String,
 }
 
 async fn retrieve_token(client_credentials: Arc<ClientCredentials>) -> Result<Token, String> {

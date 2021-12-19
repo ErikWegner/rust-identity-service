@@ -264,7 +264,7 @@ mod callback {
         Mock, MockServer, ResponseTemplate,
     };
 
-    use crate::{load_key, tests::UNITTEST_ISSUER_PUBKEYFILE};
+    use crate::{load_key, oidcclient::TokenResponse, tests::UNITTEST_ISSUER_PUBKEYFILE};
 
     use super::{build_rocket_test_instance, random_string, UNITTEST_TRUSTED_KEYFILE};
 
@@ -358,9 +358,10 @@ mod callback {
         let status = response.status();
         let te = response.into_string().unwrap();
         assert_eq!(status, Status::Ok, "{}", te);
+        let token_des = serde_json::from_str::<TokenResponse>(&te).expect("Deserialization failed");
         let responsetoken_verifyresult: Result<Token<Header, Claims, _>, _> =
-            te.as_str().verify_with_key(&pubkey2);
-        let responsetoken = responsetoken_verifyresult.expect("Verifcation succeeded");
+            token_des.access_token.as_str().verify_with_key(&pubkey2);
+        let responsetoken = responsetoken_verifyresult.expect("Verification failed");
 
         assert_eq!(
             responsetoken
