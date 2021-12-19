@@ -1,6 +1,7 @@
 use std::{collections::HashMap, pin::Pin, sync::Arc};
 
 use futures::{future::Shared, lock::Mutex, FutureExt};
+use parking_lot::RwLock;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +20,7 @@ type TokenRetriever = Shared<
 pub(crate) struct OidcClientState {
     mutex: Mutex<Option<TokenRetriever>>,
     client_credentials: Arc<ClientCredentials>,
+    pub(crate) query_token: RwLock<Option<String>>,
 }
 
 impl OidcClientState {
@@ -26,6 +28,7 @@ impl OidcClientState {
         OidcClientState {
             mutex: Mutex::new(None),
             client_credentials,
+            query_token: RwLock::new(None),
         }
     }
 

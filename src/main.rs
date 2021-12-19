@@ -352,11 +352,20 @@ fn client_token_thread(
                 let token_result = get_client_token(oidc_client_state.clone()).await;
                 match token_result {
                     Ok(token) => {
+                        {
+                            let st = Some(token.clone());
+                            let mut w = oidc_client_state.query_token.write();
+                            *w = st;
+                        }
                         threadhealthmap.insert(key.clone(), "OK".to_string());
                         next_retrieval_time =
                             calc_next_retrieval_time(token.as_str(), &verification_key);
                     }
                     Err(m) => {
+                        {
+                            let mut w = oidc_client_state.query_token.write();
+                            *w = None;
+                        }
                         threadhealthmap.insert(key.clone(), m);
                     }
                 };
