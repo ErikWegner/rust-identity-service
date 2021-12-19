@@ -2,7 +2,7 @@ use std::{collections::HashMap, pin::Pin, sync::Arc};
 
 use futures::{future::Shared, lock::Mutex, FutureExt};
 use reqwest::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub struct ClientCredentials {
     pub token_url: String,
@@ -25,7 +25,7 @@ impl OidcClientState {
     pub(crate) fn new(client_credentials: Arc<ClientCredentials>) -> OidcClientState {
         OidcClientState {
             mutex: Mutex::new(None),
-            client_credentials: client_credentials.clone(),
+            client_credentials,
         }
     }
 
@@ -34,7 +34,7 @@ impl OidcClientState {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct TokenResponse {
     pub access_token: String,
 }

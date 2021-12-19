@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::oidcclient::{get_client_token, ClientCredentials, OidcClientState};
+use crate::oidcclient::{get_client_token, ClientCredentials, OidcClientState, TokenResponse};
 use crate::{build_rocket_instance, load_key, HealthMap, LoginConfiguration};
 
 use super::rocket;
@@ -114,7 +114,10 @@ fn retrieve_token_returns_token() {
     // Start a background HTTP server on a random local port
     let mock_server = tokio_test::block_on(MockServer::start());
     let token_endpoint_path = random_string(12, Some("/provider/path-".to_string()));
-    let token = random_string(12, None);
+    let access_token = random_string(12, None);
+    let token_mock_response = TokenResponse {
+        access_token: access_token.clone(),
+    };
     let client_credentials = Arc::new(ClientCredentials {
         client_id: "MockClient".to_string(),
         client_secret: "Mock Secret 123".to_string(),
@@ -124,7 +127,13 @@ fn retrieve_token_returns_token() {
     tokio_test::block_on(
         Mock::given(method("POST"))
             .and(path(&token_endpoint_path))
-            .respond_with(ResponseTemplate::new(200).set_body_string(&token))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(
+                    serde_json::to_string(&token_mock_response)
+                        .unwrap()
+                        .as_str(),
+                ),
+            )
             .mount(&mock_server),
     );
 
@@ -134,7 +143,7 @@ fn retrieve_token_returns_token() {
     // Assert
     assert_ok!(&r);
     let tokenresult = r.unwrap();
-    assert_eq!(tokenresult, token);
+    assert_eq!(tokenresult, access_token);
 }
 
 mod login {
