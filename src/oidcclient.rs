@@ -1,4 +1,4 @@
-use std::{collections::HashMap, pin::Pin, sync::Arc};
+use std::{collections::HashMap, pin::Pin, sync::Arc, time::Duration};
 
 use futures::{future::Shared, lock::Mutex, FutureExt};
 use parking_lot::RwLock;
@@ -132,5 +132,48 @@ pub(crate) async fn acg_flow_step_2(
                 .as_u16(),
             e.to_string(),
         )),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct GroupResponse {
+    name: String,
+    path: String,
+}
+
+pub(crate) async fn try_query_groups(
+    subject: &str,
+    group_query_url: &str,
+    token: &str,
+) -> Vec<String> {
+    let client = reqwest::Client::new();
+    let res = client
+        .get(group_query_url.replace("{SUBJECT}", subject))
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await;
+    match res {
+        Ok(o) => {
+            if o.status() != StatusCode::OK {
+                return Vec::new();
+            }
+            let od = o.json::<Vec<GroupResponse>>().await;
+            match od {
+                Ok(groups) => groups
+                    .iter()
+                    .filter_map(|f| {
+                        // Only use groups at level 1
+                        if f.path.rfind('/') == Some(0) {
+                            Some(f.name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            }
+        }
+        Err(_) => Vec::new(),
     }
 }

@@ -9,7 +9,9 @@ use dashmap::DashMap;
 use dotenv::dotenv;
 use jwt::{Claims, PKeyWithDigest, RegisteredClaims, SigningAlgorithm, Token, VerifyWithKey};
 use jwt::{Header, SignWithKey};
-use oidcclient::{acg_flow_step_2, get_client_token, ClientCredentials, OidcClientState};
+use oidcclient::{
+    acg_flow_step_2, get_client_token, try_query_groups, ClientCredentials, OidcClientState,
+};
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, Private, Public};
 use openssl::x509::X509;
@@ -22,6 +24,7 @@ use rocket::{
     response::{content, status},
     Build, Rocket, State,
 };
+use serde_json::json;
 use tokio::time::sleep;
 
 #[macro_use]
@@ -47,6 +50,7 @@ pub(crate) struct LoginConfiguration {
     verification_key: Arc<PKeyWithDigest<Public>>,
     issuer: String,
     issuing_key: PKeyWithDigest<Private>,
+    group_query_url: String,
 }
 
 impl LoginConfiguration {
@@ -77,13 +81,18 @@ fn construct_redirect_uri(
     )
 }
 
-fn create_token_string(issuer: &str, subject: &str, key: &impl SigningAlgorithm) -> String {
+fn create_token_string(
+    issuer: &str,
+    subject: &str,
+    key: &impl SigningAlgorithm,
+    roles: Vec<String>,
+) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
     let expires = now + 20 * 60;
-    let claims = Claims::new(RegisteredClaims {
+    let mut claims = Claims::new(RegisteredClaims {
         issuer: Some(issuer.to_string()),
         subject: Some(subject.to_string()),
         audience: None,
@@ -92,6 +101,7 @@ fn create_token_string(issuer: &str, subject: &str, key: &impl SigningAlgorithm)
         issued_at: Some(now),
         json_web_token_id: None,
     });
+    claims.private.insert("roles".to_string(), json!(roles));
 
     claims.sign_with_key(key).unwrap()
 }
@@ -119,12 +129,15 @@ struct EnvAndDiscoveryResult {
     internal_client_secret: String,
     issuer: String,
     public_authorization_endpoint: String,
+    group_query_url: String,
     signing_key: PKeyWithDigest<Private>,
     token_endpoint: String,
     verification_key: PKeyWithDigest<Public>,
 }
 
 async fn init_env() -> EnvAndDiscoveryResult {
+    let group_query_url =
+        env::var("RIDSER_GROUP_QUERY_URL").expect("Value for RIDSER_GROUP_QUERY_URL is not set.");
     let internal_client_id =
         env::var("RIDSER_CLIENT_ID").expect("Value for RIDSER_CLIENT_ID is not set.");
     let internal_client_secret =
@@ -177,6 +190,7 @@ async fn init_env() -> EnvAndDiscoveryResult {
         issuer,
         public_authorization_endpoint: env::var("RIDSER_PUBLIC_AUTHORIZATION_URL")
             .unwrap_or_else(|_| openid_configuration.authorization_endpoint.clone()),
+        group_query_url,
         signing_key,
         token_endpoint: openid_configuration.token_endpoint,
         verification_key,
@@ -267,6 +281,7 @@ struct JwtResponse {
 async fn callback(
     user_input: Option<Form<CallbackData<'_>>>,
     state_login_configuration: &State<Arc<LoginConfiguration>>,
+    oidc_client_state: &State<Arc<OidcClientState>>,
 ) -> Result<Json<JwtResponse>, status::Custom<content::Json<String>>> {
     if user_input.is_none() {
         return Err(status::Custom(
@@ -309,11 +324,24 @@ async fn callback(
                     let subject = claims.registered.subject.as_ref().unwrap();
                     let issuing_key = &login_configuration.issuing_key;
 
+                    let p = oidc_client_state.deref().clone();
+                    let lock = p.query_token.read();
+                    let o = &*lock;
+                    let token: String = o.as_ref().unwrap().clone();
+                    drop(lock);
+                    let roles = try_query_groups(
+                        subject,
+                        login_configuration.group_query_url.as_str(),
+                        token.as_str(),
+                    )
+                    .await;
+
                     Ok(Json(JwtResponse {
                         access_token: create_token_string(
                             &login_configuration.issuer,
                             subject,
                             issuing_key,
+                            roles,
                         ),
                         token_type: "Bearer".to_string(),
                     }))
@@ -326,10 +354,12 @@ async fn callback(
 fn build_rocket_instance(
     healthmap: Arc<HealthMap>,
     login_configuration: Arc<LoginConfiguration>,
+    oidc_client_state: Arc<OidcClientState>,
 ) -> Rocket<Build> {
     rocket::build()
         .manage(healthmap)
         .manage(login_configuration)
+        .manage(oidc_client_state)
         .mount("/", routes![up, health, login, callback])
 }
 
@@ -378,7 +408,10 @@ fn client_token_thread(
 fn calc_next_retrieval_time(token: &str, verification_key: &PKeyWithDigest<Public>) -> u64 {
     let r: Result<Token<Header, Claims, _>, jwt::Error> = token.verify_with_key(verification_key);
     // Substract ten seconds from expiration time
-    r.ok().unwrap().claims().registered.expiration.unwrap() - 10
+    match r {
+        Ok(t) => t.claims().registered.expiration.unwrap() - 10,
+        Err(_) => 0,
+    }
 }
 
 #[launch]
@@ -399,9 +432,15 @@ async fn rocket() -> _ {
         verification_key: verification_key_arc.clone(),
         issuer: discovery_result.issuer,
         issuing_key: discovery_result.signing_key,
+        group_query_url: discovery_result.group_query_url,
     };
-    client_token_thread(healthmap.clone(), oidc_client_state, verification_key_arc);
-    build_rocket_instance(healthmap, Arc::new(login_configuration)).attach(cors::Cors)
+    client_token_thread(
+        healthmap.clone(),
+        oidc_client_state.clone(),
+        verification_key_arc,
+    );
+    build_rocket_instance(healthmap, Arc::new(login_configuration), oidc_client_state)
+        .attach(cors::Cors)
 }
 
 mod cors;
