@@ -57,19 +57,19 @@ impl LoginConfiguration {
 
 fn construct_redirect_uri(
     login_configuration: &LoginConfiguration,
-    client_id: &String,
-    state: &String,
-    redirect_uri: &String,
+    client_id: &str,
+    state: &str,
+    redirect_uri: &str,
 ) -> String {
     String::from(
         url::Url::parse_with_params(
             &(login_configuration.authorization_endpoint),
             &[
                 ("response_type", "code"),
-                ("client_id", client_id.as_str()),
-                ("redirect_uri", redirect_uri.as_str()),
+                ("client_id", client_id),
+                ("redirect_uri", redirect_uri),
                 ("scope", "openid"),
-                ("state", state.as_str()),
+                ("state", state),
             ],
         )
         .unwrap()
@@ -77,15 +77,15 @@ fn construct_redirect_uri(
     )
 }
 
-fn create_token_string(issuer: &String, subject: &String, key: &impl SigningAlgorithm) -> String {
+fn create_token_string(issuer: &str, subject: &str, key: &impl SigningAlgorithm) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
     let expires = now + 20 * 60;
     let claims = Claims::new(RegisteredClaims {
-        issuer: Some(issuer.clone()),
-        subject: Some(subject.clone()),
+        issuer: Some(issuer.to_string()),
+        subject: Some(subject.to_string()),
         audience: None,
         expiration: Some(expires),
         not_before: Some(now),
