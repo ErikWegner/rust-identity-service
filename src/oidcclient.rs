@@ -1,5 +1,6 @@
 use std::{collections::HashMap, pin::Pin, sync::Arc, time::Duration};
 
+use async_std::future;
 use futures::{future::Shared, lock::Mutex, FutureExt};
 use parking_lot::RwLock;
 use reqwest::StatusCode;
@@ -142,6 +143,29 @@ pub(crate) struct GroupResponse {
 }
 
 pub(crate) async fn try_query_groups(
+    subject: &str,
+    group_query_url: &str,
+    token: &str,
+) -> Vec<String> {
+    let dur = Duration::from_millis(150);
+    let redis_try_result = future::timeout(dur, query_groups_from_redis(subject)).await;
+    if redis_try_result.is_ok() {
+        return redis_try_result.unwrap()
+    }
+    let keycloak_result = query_groups_from_keycloak(subject, group_query_url, token).await;
+    update_cache(subject, &keycloak_result).await;
+    keycloak_result
+}
+
+async fn query_groups_from_redis(subject: &str) -> Vec<String> {
+    todo!();
+}
+
+async fn update_cache(subject: &str, groups: &Vec<String>) {
+    todo!();
+}
+
+async fn query_groups_from_keycloak(
     subject: &str,
     group_query_url: &str,
     token: &str,

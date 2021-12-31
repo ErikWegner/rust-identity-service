@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::oidcclient::{get_client_token, ClientCredentials, OidcClientState, TokenResponse};
+use crate::redis::Redis;
 use crate::{build_rocket_instance, load_key, HealthMap, LoginConfiguration};
 
 use super::rocket;
@@ -74,11 +75,13 @@ fn build_rocket_test_instance(mock_server_uri: Option<String>, issuer: &str) -> 
         group_query_url: format!("{}{}", uri_base, group_query_path),
     });
     let oidc_client_state = Arc::new(OidcClientState::new(client_credentials));
+    let redis = Arc::new(Redis::new());
     TestEnv {
         rocket: build_rocket_instance(
             health_map.clone(),
             login_configuration.clone(),
             oidc_client_state.clone(),
+            redis,
         ),
         health_map,
         login_configuration,

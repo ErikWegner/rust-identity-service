@@ -5,6 +5,7 @@ authors = ["Erik Wegner"]
 edition = "2021"
 
 [dependencies]
+async-std = "1.10.0"
 crossbeam = "0.8.1"
 dashmap = "5.0.0"
 dotenv = "0.15.0"
@@ -14,11 +15,7 @@ jwt = { version = "0.15.0", features = ["openssl"] }
 once_cell = "1.4.0"
 openssl = { version = "0.10" }
 parking_lot = "0.11"
-redis = { version = "0.21.4", features = [
-    "tokio-comp",
-    "connection-manager",
-    "aio",
-] }
+simple_redis = "^0.6.1"
 reqwest = { version = "0.11", features = ["default", "json", "multipart"] }
 rocket = { version = "0.5.0-rc.1", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }

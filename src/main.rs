@@ -15,6 +15,7 @@ use oidcclient::{
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, Private, Public};
 use openssl::x509::X509;
+use redis::Redis;
 use rocket::form::Form;
 use rocket::response::Redirect;
 use rocket::serde::json::Json;
@@ -355,11 +356,13 @@ fn build_rocket_instance(
     healthmap: Arc<HealthMap>,
     login_configuration: Arc<LoginConfiguration>,
     oidc_client_state: Arc<OidcClientState>,
+    redis: Arc<Redis>,
 ) -> Rocket<Build> {
     rocket::build()
         .manage(healthmap)
         .manage(login_configuration)
         .manage(oidc_client_state)
+        .manage(redis)
         .mount("/", routes![up, health, login, callback])
 }
 
@@ -439,12 +442,15 @@ async fn rocket() -> _ {
         oidc_client_state.clone(),
         verification_key_arc,
     );
-    build_rocket_instance(healthmap, Arc::new(login_configuration), oidc_client_state)
+    let redis_con = Redis::new();
+    let redis = Arc::new(redis_con);
+    build_rocket_instance(healthmap, Arc::new(login_configuration), oidc_client_state, redis)
         .attach(cors::Cors)
 }
 
 mod cors;
 mod oidcclient;
+mod redis;
 
 #[cfg(test)]
 mod tests;
