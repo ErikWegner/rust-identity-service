@@ -6,6 +6,8 @@ use parking_lot::RwLock;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
+use crate::redis::Redis;
+
 pub struct ClientCredentials {
     pub token_url: String,
     pub client_id: String,
@@ -146,23 +148,26 @@ pub(crate) async fn try_query_groups(
     subject: &str,
     group_query_url: &str,
     token: &str,
+    redis: &Redis,
 ) -> Vec<String> {
     let dur = Duration::from_millis(150);
-    let redis_try_result = future::timeout(dur, query_groups_from_redis(subject)).await;
-    if redis_try_result.is_ok() {
-        return redis_try_result.unwrap()
+    let redis_try_result = future::timeout(dur, query_groups_from_redis(redis, subject)).await;
+
+    if let Ok(Some(redis_cached_groups)) = redis_try_result {
+        return redis_cached_groups;
     }
+
     let keycloak_result = query_groups_from_keycloak(subject, group_query_url, token).await;
-    update_cache(subject, &keycloak_result).await;
+    update_cache(redis, subject, &keycloak_result).await;
     keycloak_result
 }
 
-async fn query_groups_from_redis(subject: &str) -> Vec<String> {
-    todo!();
+async fn query_groups_from_redis(redis: &Redis, subject: &str) -> Option<Vec<String>> {
+    redis.get_cache_result(subject).await
 }
 
-async fn update_cache(subject: &str, groups: &Vec<String>) {
-    todo!();
+async fn update_cache(redis: &Redis, subject: &str, groups: &[String]) {
+    redis.set_cache_result(subject, groups).await
 }
 
 async fn query_groups_from_keycloak(

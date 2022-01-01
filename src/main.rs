@@ -283,6 +283,7 @@ async fn callback(
     user_input: Option<Form<CallbackData<'_>>>,
     state_login_configuration: &State<Arc<LoginConfiguration>>,
     oidc_client_state: &State<Arc<OidcClientState>>,
+    redis: &State<Arc<Redis>>,
 ) -> Result<Json<JwtResponse>, status::Custom<content::Json<String>>> {
     if user_input.is_none() {
         return Err(status::Custom(
@@ -334,6 +335,7 @@ async fn callback(
                         subject,
                         login_configuration.group_query_url.as_str(),
                         token.as_str(),
+                        redis,
                     )
                     .await;
 
@@ -444,8 +446,13 @@ async fn rocket() -> _ {
     );
     let redis_con = Redis::new();
     let redis = Arc::new(redis_con);
-    build_rocket_instance(healthmap, Arc::new(login_configuration), oidc_client_state, redis)
-        .attach(cors::Cors)
+    build_rocket_instance(
+        healthmap,
+        Arc::new(login_configuration),
+        oidc_client_state,
+        redis,
+    )
+    .attach(cors::Cors)
 }
 
 mod cors;
