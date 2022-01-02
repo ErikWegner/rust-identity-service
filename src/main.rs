@@ -126,11 +126,12 @@ struct CertsResponse {
 }
 
 struct EnvAndDiscoveryResult {
+    group_query_url: String,
     internal_client_id: String,
     internal_client_secret: String,
     issuer: String,
     public_authorization_endpoint: String,
-    group_query_url: String,
+    redis_conn_string: String,
     signing_key: PKeyWithDigest<Private>,
     token_endpoint: String,
     verification_key: PKeyWithDigest<Public>,
@@ -185,13 +186,16 @@ async fn init_env() -> EnvAndDiscoveryResult {
         digest: MessageDigest::sha256(),
         key: x509_public_key.expect("Verification key invalid"),
     };
+    let redis_conn_string =
+        env::var("RIDSER_REDIS_CONNECTION").expect("Value for RIDSER_REDIS_CONNECTION is not set.");
     EnvAndDiscoveryResult {
+        group_query_url,
         internal_client_id,
         internal_client_secret,
         issuer,
         public_authorization_endpoint: env::var("RIDSER_PUBLIC_AUTHORIZATION_URL")
             .unwrap_or_else(|_| openid_configuration.authorization_endpoint.clone()),
-        group_query_url,
+        redis_conn_string,
         signing_key,
         token_endpoint: openid_configuration.token_endpoint,
         verification_key,
@@ -444,7 +448,7 @@ async fn rocket() -> _ {
         oidc_client_state.clone(),
         verification_key_arc,
     );
-    let redis_con = Redis::new();
+    let redis_con = Redis::new(&discovery_result.redis_conn_string);
     let redis = Arc::new(redis_con);
     build_rocket_instance(
         healthmap,

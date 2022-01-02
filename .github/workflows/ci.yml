@@ -25,7 +25,6 @@ jobs:
         ports:
           - 6379:6379
     runs-on: ubuntu-latest
-    container: mcr.microsoft.com/vscode/devcontainers/rust:bullseye
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -36,6 +35,8 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: test
+        env:
+          RIDSER_REDIS_CONNECTION: redis://127.0.0.1:6789
 
   fmt:
     name: Rustfmt

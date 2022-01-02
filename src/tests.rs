@@ -1,3 +1,4 @@
+use std::env;
 use std::sync::Arc;
 
 use crate::oidcclient::{get_client_token, ClientCredentials, OidcClientState, TokenResponse};
@@ -31,6 +32,11 @@ struct TestEnv {
     oidc_client_state: Arc<OidcClientState>,
     token_endpoint_path: String,
     group_query_path: String,
+}
+
+pub(crate) fn get_redis() -> Redis {
+    let c = env::var("RIDSER_REDIS_CONNECTION").unwrap_or_else(|_| "redis://redis/".to_string());
+    Redis::new(c.as_str())
 }
 
 fn random_string(length: usize, prefix: Option<String>) -> String {
@@ -75,7 +81,7 @@ fn build_rocket_test_instance(mock_server_uri: Option<String>, issuer: &str) -> 
         group_query_url: format!("{}{}", uri_base, group_query_path),
     });
     let oidc_client_state = Arc::new(OidcClientState::new(client_credentials));
-    let redis = Arc::new(Redis::new());
+    let redis = Arc::new(get_redis());
     TestEnv {
         rocket: build_rocket_instance(
             health_map.clone(),

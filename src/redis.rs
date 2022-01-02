@@ -12,9 +12,8 @@ pub(crate) struct Redis {
 }
 
 impl Redis {
-    pub fn new() -> Self {
-        // TODO: configurable connection
-        let client1 = simple_redis::create("redis://redis/");
+    pub fn new(connection_string: &str) -> Self {
+        let client1 = simple_redis::create(connection_string);
         let client2 = client1.expect("Redis connection failed");
         Self {
             cache_seconds: 10 * 60,
@@ -23,14 +22,14 @@ impl Redis {
     }
 
     pub async fn set_cache_result(&self, subject: &str, groups: &[String]) {
-        let key = subject_key(subject);
+        let key = subject_groups_key(subject);
         let value = groups.join(",");
         let mut rediscon = self.client.lock();
         let _ = rediscon.setex(key.as_str(), value.as_str(), self.cache_seconds);
     }
 
     pub async fn get_cache_result(&self, subject: &str) -> Option<Vec<String>> {
-        let key = subject_key(subject);
+        let key = subject_groups_key(subject);
         let mut rediscon = self.client.lock();
         let r = rediscon.get_string(key.as_str());
         drop(rediscon);
@@ -43,6 +42,6 @@ impl Redis {
     }
 }
 
-fn subject_key(subject: &str) -> String {
-    format!("subject-{}", subject)
+fn subject_groups_key(subject: &str) -> String {
+    format!("subject/{}/groups", subject)
 }

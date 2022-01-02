@@ -1,9 +1,9 @@
-use super::Redis;
+use crate::tests::get_redis;
 
 #[test]
 fn write_value() {
     // Arrange
-    let redis = Redis::new();
+    let redis = get_redis();
     let groups: Vec<String> = vec!["a".to_string(), "/b/".to_string()];
     let subject = "87f1e539-0d6e-41e9-971e-58f54565918a";
 
@@ -16,7 +16,7 @@ fn write_value() {
 #[test]
 fn write_and_read_value() {
     // Arrange
-    let redis = Redis::new();
+    let redis = get_redis();
     let groups: Vec<String> = vec!["a".to_string(), "/b/".to_string()];
     let subject = "87f1e539-0d6e-41e9-971e-58f54565918a";
     tokio_test::block_on(redis.set_cache_result(subject, &groups));
