@@ -36,7 +36,7 @@ jobs:
         with:
           command: test
         env:
-          RIDSER_REDIS_CONNECTION: redis://127.0.0.1:6789
+          RIDSER_REDIS_CONNECTION: redis://127.0.0.1:6379
 
   fmt:
     name: Rustfmt
