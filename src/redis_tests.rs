@@ -1,28 +1,28 @@
 use crate::tests::get_redis;
 
-#[test]
-fn write_value() {
+#[tokio::test]
+async fn write_value() {
     // Arrange
     let redis = get_redis();
     let groups: Vec<String> = vec!["a".to_string(), "/b/".to_string()];
     let subject = "87f1e539-0d6e-41e9-971e-58f54565918a";
 
     // Act
-    tokio_test::block_on(redis.set_cache_result(subject, &groups));
+    redis.set_cache_result(subject, &groups).await;
 
     // Assert: no exception here
 }
 
-#[test]
-fn write_and_read_value() {
+#[tokio::test]
+async fn write_and_read_value() {
     // Arrange
     let redis = get_redis();
     let groups: Vec<String> = vec!["a".to_string(), "/b/".to_string()];
     let subject = "87f1e539-0d6e-41e9-971e-58f54565918a";
-    tokio_test::block_on(redis.set_cache_result(subject, &groups));
+    redis.set_cache_result(subject, &groups).await;
 
     // Act
-    let result = tokio_test::block_on(redis.get_cache_result(subject));
+    let result = redis.get_cache_result(subject).await;
 
     // Assert
     assert_eq!(groups, result.unwrap());

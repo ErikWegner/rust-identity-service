@@ -12,7 +12,7 @@ use openssl::pkey::PKey;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use rocket::http::Status;
-use rocket::local::blocking::Client;
+use rocket::local::asynchronous::Client;
 use rocket::{Build, Rocket};
 use tokio_test::assert_ok;
 use wiremock::matchers::{method, path};
@@ -97,46 +97,52 @@ fn build_rocket_test_instance(mock_server_uri: Option<String>, issuer: &str) -> 
     }
 }
 
-#[test]
-fn up() {
+#[tokio::test]
+async fn up() {
     let t = build_rocket_test_instance(None, "unittest");
-    let client = Client::tracked(t.rocket).expect("valid rocket instance");
-    let response = client.get("/up").dispatch();
+    let client = Client::tracked(t.rocket)
+        .await
+        .expect("valid rocket instance");
+    let response = client.get("/up").dispatch().await;
     assert_eq!(response.status(), Status::Ok);
-    assert_eq!(response.into_string(), Some("OK".into()));
+    assert_eq!(response.into_string().await, Some("OK".into()));
 }
 
-#[test]
-fn health_simple_ok() {
+#[tokio::test]
+async fn health_simple_ok() {
     let t = build_rocket_test_instance(None, "unittest");
     t.health_map.clear();
     t.health_map.insert("con".to_string(), "OK".to_string());
-    let client = Client::tracked(t.rocket).expect("valid rocket instance");
-    let response = client.get("/health").dispatch();
+    let client = Client::tracked(t.rocket)
+        .await
+        .expect("valid rocket instance");
+    let response = client.get("/health").dispatch().await;
     assert_eq!(response.status(), Status::Ok);
-    assert_eq!(response.into_string(), Some("OK".into()));
+    assert_eq!(response.into_string().await, Some("OK".into()));
 }
 
-#[test]
-fn health_simple_fail() {
+#[tokio::test]
+async fn health_simple_fail() {
     let t = build_rocket_test_instance(None, "unittest");
     t.health_map.clear();
     t.health_map
         .insert("con".to_string(), "failed to connect".to_string());
-    let client = Client::tracked(t.rocket).expect("valid rocket instance");
-    let response = client.get("/health").dispatch();
+    let client = Client::tracked(t.rocket)
+        .await
+        .expect("valid rocket instance");
+    let response = client.get("/health").dispatch().await;
     assert_eq!(response.status(), Status::BadGateway);
     assert_eq!(
-        response.into_string(),
+        response.into_string().await,
         Some("{\"faults\":{\"con\":\"failed to connect\"}}".into())
     );
 }
 
-#[test]
-fn retrieve_token_returns_token() {
+#[tokio::test]
+async fn retrieve_token_returns_token() {
     // Arrange
     // Start a background HTTP server on a random local port
-    let mock_server = tokio_test::block_on(MockServer::start());
+    let mock_server = MockServer::start().await;
     let token_endpoint_path = random_string(12, Some("/provider/path-".to_string()));
     let access_token = random_string(12, None);
     let token_mock_response = TokenResponse {
@@ -148,21 +154,21 @@ fn retrieve_token_returns_token() {
         token_url: format!("{}{}", mock_server.uri(), token_endpoint_path),
     });
     let oidc_client_state = Arc::new(OidcClientState::new(client_credentials));
-    tokio_test::block_on(
-        Mock::given(method("POST"))
-            .and(path(&token_endpoint_path))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_string(
-                    serde_json::to_string(&token_mock_response)
-                        .unwrap()
-                        .as_str(),
-                ),
-            )
-            .mount(&mock_server),
-    );
+
+    Mock::given(method("POST"))
+        .and(path(&token_endpoint_path))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(
+                serde_json::to_string(&token_mock_response)
+                    .unwrap()
+                    .as_str(),
+            ),
+        )
+        .mount(&mock_server)
+        .await;
 
     // Act
-    let r = tokio_test::block_on(get_client_token(oidc_client_state));
+    let r = get_client_token(oidc_client_state).await;
 
     // Assert
     assert_ok!(&r);
@@ -171,15 +177,17 @@ fn retrieve_token_returns_token() {
 }
 
 mod login {
-    use rocket::{http::Status, local::blocking::Client};
+    use rocket::{http::Status, local::asynchronous::Client};
 
     use crate::tests::{build_rocket_test_instance, random_string};
 
-    #[test]
-    fn login_returns_redirect() {
+    #[tokio::test]
+    async fn login_returns_redirect() {
         // Arrange
         let t = build_rocket_test_instance(None, "unittest");
-        let client = Client::tracked(t.rocket).expect("valid rocket instance");
+        let client = Client::tracked(t.rocket)
+            .await
+            .expect("valid rocket instance");
         let state = random_string(8, None);
         let client_id = random_string(32, None);
         let redirect_uri = String::from("https://front.end.server/auth/callback");
@@ -197,14 +205,15 @@ mod login {
                 "/login?state={}&client_id={}&redirect_uri={}",
                 state, client_id, redirect_uri
             ))
-            .dispatch();
+            .dispatch()
+            .await;
 
         // Assert
         assert_eq!(
             response.status(),
             Status::SeeOther,
             "{}",
-            response.into_string().unwrap()
+            response.into_string().await.unwrap()
         );
         assert!(response.headers().contains("Location"));
         assert_eq!(
@@ -213,11 +222,13 @@ mod login {
         );
     }
 
-    #[test]
-    fn login_without_clientid_returns_bad_request() {
+    #[tokio::test]
+    async fn login_without_clientid_returns_bad_request() {
         // Arrange
         let t = build_rocket_test_instance(None, "unittest");
-        let client = Client::tracked(t.rocket).expect("valid rocket instance");
+        let client = Client::tracked(t.rocket)
+            .await
+            .expect("valid rocket instance");
         let state = random_string(8, None);
         let redirect_uri = String::from("https://front.end.server/auth/callback");
 
@@ -227,21 +238,24 @@ mod login {
                 "/login?state={}&redirect_uri={}",
                 state, redirect_uri
             ))
-            .dispatch();
+            .dispatch()
+            .await;
 
         // Assert
         assert_eq!(response.status(), Status::BadRequest);
         assert_eq!(
-            response.into_string().unwrap(),
+            response.into_string().await.unwrap(),
             "{\"message\": \"client_id is missing\"}"
         );
     }
 
-    #[test]
-    fn login_without_state_returns_bad_request() {
+    #[tokio::test]
+    async fn login_without_state_returns_bad_request() {
         // Arrange
         let t = build_rocket_test_instance(None, "unittest");
-        let client = Client::tracked(t.rocket).expect("valid rocket instance");
+        let client = Client::tracked(t.rocket)
+            .await
+            .expect("valid rocket instance");
         let client_id = random_string(32, None);
         let redirect_uri = String::from("https://front.end.server/auth/callback");
 
@@ -251,33 +265,37 @@ mod login {
                 "/login?client_id={}&redirect_uri={}",
                 client_id, redirect_uri
             ))
-            .dispatch();
+            .dispatch()
+            .await;
 
         // Assert
         assert_eq!(response.status(), Status::BadRequest);
         assert_eq!(
-            response.into_string().unwrap(),
+            response.into_string().await.unwrap(),
             "{\"message\": \"state is missing\"}"
         );
     }
 
-    #[test]
-    fn login_without_redirect_uri_returns_bad_request() {
+    #[tokio::test]
+    async fn login_without_redirect_uri_returns_bad_request() {
         // Arrange
         let t = build_rocket_test_instance(None, "unittest");
-        let client = Client::tracked(t.rocket).expect("valid rocket instance");
+        let client = Client::tracked(t.rocket)
+            .await
+            .expect("valid rocket instance");
         let state = random_string(8, None);
         let client_id = random_string(32, None);
 
         // Act
         let response = client
             .get(format!("/login?state={}&client_id={}", state, client_id))
-            .dispatch();
+            .dispatch()
+            .await;
 
         // Assert
         assert_eq!(response.status(), Status::BadRequest);
         assert_eq!(
-            response.into_string().unwrap(),
+            response.into_string().await.unwrap(),
             "{\"message\": \"redirect_uri is missing\"}"
         );
     }
@@ -290,7 +308,7 @@ mod callback {
     use openssl::{hash::MessageDigest, pkey::PKey};
     use rocket::{
         http::{ContentType, Status},
-        local::blocking::Client,
+        local::asynchronous::Client,
     };
     use serde_json::json;
     use wiremock::{
@@ -327,34 +345,36 @@ mod callback {
         format!("redirect_uri={}&code={}", redirect_uri, code)
     }
 
-    #[test]
-    fn callback_creates_bad_request_for_empty_body() {
+    #[tokio::test]
+    async fn callback_creates_bad_request_for_empty_body() {
         // Arrange
         let t = build_rocket_test_instance(None, "unittest");
-        let client = Client::tracked(t.rocket).expect("valid rocket instance");
+        let client = Client::tracked(t.rocket)
+            .await
+            .expect("valid rocket instance");
 
         // Act
-        let response = client.post("/callback").body("").dispatch();
+        let response = client.post("/callback").body("").dispatch().await;
 
         // Assert
         assert_eq!(
             response.status(),
             Status::BadRequest,
             "{}",
-            response.into_string().unwrap()
+            response.into_string().await.unwrap()
         );
         assert_eq!(
-            response.into_string().unwrap(),
+            response.into_string().await.unwrap(),
             "{\"message\": \"cannot parse body\"}"
         );
     }
 
-    #[test]
-    fn callback_returns_token() {
+    #[tokio::test]
+    async fn callback_returns_token() {
         // Arrange
         let redirect_uri = String::from("https://front.end.server/auth/callback");
         let code = random_string(24, None);
-        let mock_server = tokio_test::block_on(MockServer::start());
+        let mock_server = MockServer::start().await;
 
         let user_id = random_string(8, Some("user-".to_string()));
         let second_issuer = random_string(12, Some("issuer2-".to_string()));
@@ -371,20 +391,21 @@ mod callback {
         };
         let t = build_rocket_test_instance(Some(mock_server.uri()), second_issuer.as_str());
         // Wiremock: second part of OpenID Connect
-        tokio_test::block_on(
-            Mock::given(method("POST"))
-                .and(path(&t.token_endpoint_path))
-                .respond_with(ResponseTemplate::new(200).set_body_string(&token))
-                .mount(&mock_server),
-        );
+
+        Mock::given(method("POST"))
+            .and(path(&t.token_endpoint_path))
+            .respond_with(ResponseTemplate::new(200).set_body_string(&token))
+            .mount(&mock_server)
+            .await;
         // Wiremock: group membership for user
-        tokio_test::block_on(
-            Mock::given(method("GET"))
+
+        Mock::given(method("GET"))
                 .and(path(&t.group_query_path.replace("{SUBJECT}", user_id.as_str())))
                 .respond_with(ResponseTemplate::new(200).set_body_string(r#"[{"id":"1e1ca5a8-9162-43ff-b318-c7d293ca2441","name":"Group1","path":"/Group1"},{"id":"475b26d8-398b-468d-b703-7d448987e1c3","name":"Group2","path":"/Group2"},{"id":"de383b7d-cbe0-4435-80ed-20f19014e240","name":"Group4","path":"/Group3/Group4"}]"#))
-                .mount(&mock_server),
-        );
-        let client = Client::tracked(t.rocket).expect("valid rocket instance");
+                .mount(&mock_server).await;
+        let client = Client::tracked(t.rocket)
+            .await
+            .expect("valid rocket instance");
         {
             let mut w = t.oidc_client_state.query_token.write();
             *w = Some("zork".to_string());
@@ -395,11 +416,12 @@ mod callback {
             .post("/callback")
             .header(ContentType::Form)
             .body(callback_body(redirect_uri, code))
-            .dispatch();
+            .dispatch()
+            .await;
 
         // Assert
         let status = response.status();
-        let te = response.into_string().unwrap();
+        let te = response.into_string().await.unwrap();
         assert_eq!(status, Status::Ok, "{}", te);
         let token_des = serde_json::from_str::<TokenResponse>(&te).expect("Deserialization failed");
         let responsetoken_verifyresult: Result<Token<Header, Claims, _>, _> =
