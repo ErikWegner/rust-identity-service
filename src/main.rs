@@ -1,17 +1,17 @@
 mod pool;
 
-#[macro_use] extern crate rocket;
+#[macro_use]
+extern crate rocket;
+use pool::PoolHQ;
 use rocket::State;
-use tokio::sync::{oneshot, mpsc};
+use tokio::sync::{mpsc, oneshot};
 
 struct MyActor {
     receiver: mpsc::Receiver<ActorMessage>,
     next_id: u32,
 }
 enum ActorMessage {
-    GetUniqueId {
-        respond_to: oneshot::Sender<u32>,
-    },
+    GetUniqueId { respond_to: oneshot::Sender<u32> },
 }
 
 impl MyActor {
@@ -31,7 +31,7 @@ impl MyActor {
                 // This can happen if the `select!` macro is used
                 // to cancel waiting for the response.
                 let _ = respond_to.send(self.next_id);
-            },
+            }
         }
     }
 }
@@ -52,9 +52,7 @@ impl MyActorHandle {
 
     pub async fn get_unique_id(&self) -> u32 {
         let (send, recv) = oneshot::channel();
-        let msg = ActorMessage::GetUniqueId {
-            respond_to: send,
-        };
+        let msg = ActorMessage::GetUniqueId { respond_to: send };
 
         // Ignore send errors. If this send fails, so does the
         // recv.await below. There's no reason to check for the
@@ -70,20 +68,28 @@ async fn run_my_actor(mut actor: MyActor) {
     }
 }
 
-
-
-
 #[get("/")]
 async fn index(ac: &State<MyActorHandle>) -> String {
     let r = ac.get_unique_id().await;
     format!("Hello {r}")
 }
 
+#[get("/x")]
+async fn x(p: &State<PoolHQ>) -> String {
+    let r = p.handle(String::from("zork")).await;
+    match r {
+        Some(t) => format!("Hello {t}"),
+        None => "No result".into(),
+    }
+}
+
 #[launch]
 async fn rocket() -> _ {
     let ac = MyActorHandle::new();
+    let p = PoolHQ::new(4);
 
     rocket::build()
-    .manage(ac)
-    .mount("/", routes![index])
+        .manage(ac)
+        .manage(p)
+        .mount("/", routes![index, x])
 }

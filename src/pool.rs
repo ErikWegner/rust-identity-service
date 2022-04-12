@@ -6,7 +6,13 @@
 // HQ: Wartet auf GibMirArbeit
 // HQ: Gibt AufruferAntwortKanal via GibMirArbeit-OneShot-Response zurück
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    sync::{
+        mpsc::{self, UnboundedReceiver},
+        oneshot,
+    },
+    task,
+};
 
 struct PoolWorker1 {
     index: usize,
@@ -28,7 +34,7 @@ impl PoolWorker1 {
                 let waitresult = task_rx.await;
                 if let Ok(task) = waitresult {
                     let _ = task
-                        .rx
+                        .response
                         .send(format!("Response from worker #{}: {}", windex, task.arg));
                 } else {
                     keeprunning = false
@@ -44,28 +50,57 @@ struct PoolWorkerQueue {
 
 struct PoolTask {
     arg: String,
-    rx: oneshot::Sender<String>,
+    response: oneshot::Sender<String>,
 }
 
-struct PoolHQ {}
+pub(crate) struct PoolHQ {
+    workers_rx: UnboundedReceiver<PoolWorkerQueue>,
+}
 
 impl PoolHQ {
-    fn new(count: usize) -> Self {
-        let (giveMeWorkTx, giveMeWorkRx) = mpsc::unbounded_channel::<PoolWorkerQueue>();
+    pub(crate) fn new(count: usize) -> Self {
+        let (workers_tx, workers_rx) = mpsc::unbounded_channel::<PoolWorkerQueue>();
 
         for worker_index in 1..count {
             let worker = PoolWorker1::new(worker_index);
-            worker.spawn(giveMeWorkTx.clone());
+            worker.spawn(workers_tx.clone());
         }
-        tokio::spawn(async {
-            let rx = giveMeWorkRx;
-            //     while let Some(msg) = rx.recv().await {}
-        });
+        // tokio::spawn(async {
+        //     let mut rx = workers_rx;
+        //     while let Some(msg) = rx.recv().await {}
+        // });
 
-        PoolHQ {}
+        PoolHQ { workers_rx }
     }
 
-    fn handle(arg: String, responseChannel: oneshot::Sender<String>) {}
+    pub(crate) async fn handle(&mut self, arg: String) -> Option<String> {
+        let rx = &mut self.workers_rx;
+        let (response_tx, mut response_rx) = oneshot::channel::<String>();
+        if let Some(msg) = rx.recv().await {
+            let send_task_result = msg.task.send(PoolTask {
+                arg,
+                response: response_tx,
+            });
+            if send_task_result.is_err() {
+                return None;
+            }
+            let mut wait_cycles = 10;
+            while wait_cycles > 0 {
+                wait_cycles = wait_cycles - 1;
+                let receive_result = response_rx.try_recv();
+                match receive_result {
+                    Ok(response) => return Some(response),
+                    Err(err_kind) => match err_kind {
+                        oneshot::error::TryRecvError::Empty => {
+                            task::yield_now().await;
+                        }
+                        oneshot::error::TryRecvError::Closed => {}
+                    },
+                }
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -107,7 +142,7 @@ mod test {
                 let (rx, mut tx) = oneshot::channel::<String>();
                 let t = PoolTask {
                     arg: String::from("zork"),
-                    rx,
+                    response: rx,
                 };
                 let e = q.task.send(t);
                 if e.is_err() {
