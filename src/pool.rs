@@ -72,7 +72,13 @@ impl PoolHQ {
 mod test {
     use std::time::Duration;
 
-    use tokio::{sync::{mpsc, oneshot::{self, error::TryRecvError}}, time::sleep};
+    use tokio::{
+        sync::{
+            mpsc,
+            oneshot::{self, error::TryRecvError},
+        },
+        time::sleep,
+    };
 
     use super::{PoolHQ, PoolTask, PoolWorker1, PoolWorkerQueue};
 
@@ -115,11 +121,12 @@ mod test {
                         Err(k) => match k {
                             TryRecvError::Empty => {
                                 if waiter > 0 {
+                                    waiter = waiter - 1;
                                     sleep(Duration::from_millis(100)).await;
                                 } else {
                                     panic!("Empty");
                                 }
-                            },
+                            }
                             TryRecvError::Closed => panic!("Closed"),
                         },
                     }
