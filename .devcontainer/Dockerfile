@@ -6,4 +6,4 @@ FROM mcr.microsoft.com/vscode/devcontainers/rust:1-${VARIANT}
 # [Optional] Uncomment this section to install additional packages.
 # RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 #     && apt-get -y install --no-install-recommends <your-package-list-here>
-RUN rustup default 1.60.0
+RUN rustup default 1.60.0 && rustup component add rustfmt

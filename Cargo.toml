@@ -9,3 +9,6 @@ edition = "2021"
 [dependencies]
 rocket = { version = "0.5.0-rc.1", features = ["json"] }
 tokio = "^1.17.0"
+
+[dev-dependencies]
+tokio-test = "*"

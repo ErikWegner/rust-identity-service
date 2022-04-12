@@ -1,3 +1,5 @@
+mod pool;
+
 #[macro_use] extern crate rocket;
 use rocket::State;
 use tokio::sync::{oneshot, mpsc};
