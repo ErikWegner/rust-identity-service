@@ -68,6 +68,11 @@ async fn run_my_actor(mut actor: MyActor) {
     }
 }
 
+#[get("/a")]
+async fn a() -> &'static str {
+    "OK"
+}
+
 #[get("/")]
 async fn index(ac: &State<MyActorHandle>) -> String {
     let r = ac.get_unique_id().await;
@@ -91,5 +96,5 @@ async fn rocket() -> _ {
     rocket::build()
         .manage(ac)
         .manage(p)
-        .mount("/", routes![index, x])
+        .mount("/", routes![index, x, a])
 }
