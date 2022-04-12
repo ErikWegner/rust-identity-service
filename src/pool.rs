@@ -109,14 +109,14 @@ impl PoolHQ {
 
 #[cfg(test)]
 mod test {
-    use tokio::sync::mpsc::{self, channel};
+    use tokio::sync::mpsc::{channel, unbounded_channel};
 
     use super::{PoolTask, PoolWorker1, PoolWorkerQueue};
 
     #[tokio::test]
     async fn test_early_close() {
         let w1 = PoolWorker1::new(3);
-        let (give_me_work_tx, give_me_work_rx) = mpsc::unbounded_channel::<PoolWorkerQueue>();
+        let (give_me_work_tx, give_me_work_rx) = unbounded_channel::<PoolWorkerQueue>();
         let w1handle = w1.spawn(give_me_work_tx);
 
         drop(give_me_work_rx);
@@ -129,7 +129,7 @@ mod test {
     #[tokio::test]
     async fn test_worker_response1() {
         let w1 = PoolWorker1::new(3);
-        let (give_me_work_tx, mut give_me_work_rx) = mpsc::unbounded_channel::<PoolWorkerQueue>();
+        let (give_me_work_tx, mut give_me_work_rx) = unbounded_channel::<PoolWorkerQueue>();
         let w1handle = w1.spawn(give_me_work_tx);
 
         let taskresult = give_me_work_rx.recv().await;
