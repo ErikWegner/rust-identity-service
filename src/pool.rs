@@ -8,7 +8,7 @@
 
 use tokio::{
     sync::{
-        mpsc::{self, UnboundedReceiver},
+        mpsc::{self, UnboundedSender},
         oneshot,
     },
     task,
@@ -29,17 +29,34 @@ impl PoolWorker1 {
         tokio::spawn(async move {
             let mut keeprunning = true;
             while keeprunning {
-                let (task_tx, task_rx) = oneshot::channel::<PoolTask>();
+                println!("worker: keeprunning");
+                let (task_tx, mut task_rx) = oneshot::channel::<PoolTask>();
+                println!("worker -> hq");
                 let _ = hq.send(PoolWorkerQueue { task: task_tx });
-                let waitresult = task_rx.await;
-                if let Ok(task) = waitresult {
-                    let _ = task
-                        .response
-                        .send(format!("Response from worker #{}: {}", windex, task.arg));
-                } else {
-                    keeprunning = false
+                let mut waitforhq = true;
+                while waitforhq {
+                    let waitresult = task_rx.try_recv();
+                    match waitresult {
+                        Ok(task) => {
+                            println!("worker: got task");
+                            waitforhq = false;
+                            let _ = task
+                                .response
+                                .send(format!("Response from worker #{}: {}", windex, task.arg));
+                        }
+                        Err(errkind) => match errkind {
+                            oneshot::error::TryRecvError::Empty => {
+                                task::yield_now().await;
+                            }
+                            oneshot::error::TryRecvError::Closed => {
+                                keeprunning = false;
+                                waitforhq = false;
+                            }
+                        },
+                    }
                 }
             }
+            println!("worker: shutdown");
         })
     }
 }
@@ -54,49 +71,61 @@ struct PoolTask {
 }
 
 pub(crate) struct PoolHQ {
-    workers_rx: UnboundedReceiver<PoolWorkerQueue>,
+    client_requests_tx: UnboundedSender<PoolTask>,
 }
 
 impl PoolHQ {
     pub(crate) fn new(count: usize) -> Self {
-        let (workers_tx, workers_rx) = mpsc::unbounded_channel::<PoolWorkerQueue>();
+        let (workers_tx, mut workers_rx) = mpsc::unbounded_channel::<PoolWorkerQueue>();
+        let (client_requests_tx, mut client_requests_rx) = mpsc::unbounded_channel::<PoolTask>();
 
         for worker_index in 1..count {
             let worker = PoolWorker1::new(worker_index);
             worker.spawn(workers_tx.clone());
         }
-        // tokio::spawn(async {
-        //     let mut rx = workers_rx;
-        //     while let Some(msg) = rx.recv().await {}
-        // });
+        tokio::spawn(async move {
+            loop {
+                let client_request_result = client_requests_rx.try_recv();
+                if let Ok(client_request) = client_request_result {
+                    let worker = workers_rx.recv().await;
+                    println!("hq has worker recv");
+                    if let Some(nextworker) = worker {
+                        println!("hq -> worker");
+                        let _ = nextworker.task.send(client_request);
+                    } else {
+                        return;
+                    }
+                }
+            }
+        });
 
-        PoolHQ { workers_rx }
+        PoolHQ { client_requests_tx }
     }
 
-    pub(crate) async fn handle(&mut self, arg: String) -> Option<String> {
-        let rx = &mut self.workers_rx;
+    pub(crate) async fn handle(&self, arg: String) -> Option<String> {
         let (response_tx, mut response_rx) = oneshot::channel::<String>();
-        if let Some(msg) = rx.recv().await {
-            let send_task_result = msg.task.send(PoolTask {
-                arg,
-                response: response_tx,
-            });
-            if send_task_result.is_err() {
-                return None;
-            }
-            let mut wait_cycles = 10;
-            while wait_cycles > 0 {
-                wait_cycles = wait_cycles - 1;
-                let receive_result = response_rx.try_recv();
-                match receive_result {
-                    Ok(response) => return Some(response),
-                    Err(err_kind) => match err_kind {
-                        oneshot::error::TryRecvError::Empty => {
-                            task::yield_now().await;
-                        }
-                        oneshot::error::TryRecvError::Closed => {}
-                    },
-                }
+
+        let send_task_result = self.client_requests_tx.send(PoolTask {
+            arg,
+            response: response_tx,
+        });
+        if send_task_result.is_err() {
+            return None;
+        }
+
+        let mut wait_cycles = 10;
+        while wait_cycles > 0 {
+            wait_cycles = wait_cycles - 1;
+            let receive_result = response_rx.try_recv();
+            match receive_result {
+                Ok(response) => return Some(response),
+                Err(err_kind) => match err_kind {
+                    oneshot::error::TryRecvError::Empty => {
+                        println!("empty");
+                        task::yield_now().await;
+                    }
+                    oneshot::error::TryRecvError::Closed => {}
+                },
             }
         }
         None
