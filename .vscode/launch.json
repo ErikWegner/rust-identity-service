@@ -1,23 +1,42 @@
-
 {
     "version": "0.2.0",
     "configurations": [
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable",
+            "name": "Debug executable 'ridser'",
             "cargo": {
                 "args": [
                     "build",
                     "--bin=ridser",
-                    "--package=ridser",
-                    "--manifest-path=Cargo.toml"
+                    "--package=ridser"
                 ],
                 "filter": {
+                    "name": "ridser",
                     "kind": "bin"
                 }
             },
-            "args": []
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'ridser'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=ridser",
+                    "--package=ridser"
+                ],
+                "filter": {
+                    "name": "ridser",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
         }
     ]
 }

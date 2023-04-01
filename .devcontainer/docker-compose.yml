@@ -2,10 +2,10 @@ version: '3'
 services:
   ridser:
     # https://mcr.microsoft.com/v2/vscode/devcontainers/rust/tags/list
-    image: mcr.microsoft.com/vscode/devcontainers/rust:bullseye
+    image: mcr.microsoft.com/devcontainers/rust:0-1-bullseye
     volumes:
       # Mount the root folder that contains .git
-      - .:/workspace:cached
+      - ..:/workspace:cached
     command: /bin/sh -c "while sleep 1000; do :; done"
 
   redis:
