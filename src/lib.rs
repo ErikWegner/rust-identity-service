@@ -1,4 +1,4 @@
-use axum::Router;
+use axum::{http::StatusCode, routing::get, Router};
 use http::socket_addr;
 use tokio::signal;
 
@@ -30,8 +30,21 @@ async fn shutdown_signal() {
     println!("signal received, starting graceful shutdown");
 }
 
+fn health_routes() -> Router {
+    Router::new()
+        .route("/up", get(|| async { "up" }))
+        .route("/health", get(|| async { "health" }))
+}
+
 fn app() -> Router {
     Router::new()
+        .nest("/app", health_routes())
+        .fallback(|| async {
+            (
+                StatusCode::NOT_FOUND,
+                "Nothing can be found at this address.",
+            )
+        })
 }
 
 pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
