@@ -1,6 +1,7 @@
-use axum::{http::StatusCode, routing::get, Router};
+use axum::{routing::get, Router};
 use http::socket_addr;
 use tokio::signal;
+use tower_http::services::{ServeDir, ServeFile};
 
 pub(crate) mod http;
 
@@ -37,14 +38,10 @@ fn health_routes() -> Router {
 }
 
 fn app() -> Router {
+    let serve_dir = ServeDir::new("files").not_found_service(ServeFile::new("files/index.html"));
     Router::new()
         .nest("/app", health_routes())
-        .fallback(|| async {
-            (
-                StatusCode::NOT_FOUND,
-                "Nothing can be found at this address.",
-            )
-        })
+        .fallback_service(serve_dir)
 }
 
 pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
