@@ -13,12 +13,13 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:21.0.2
-    command: [ "start-dev" ]
+    command:
+      - start-dev
+      - --import-realm
     ports:
-      - "8101:8443"
+      - "8101:8080"
     environment:
-      - KEYCLOAK_USER=admin
-      - KEYCLOAK_PASSWORD=admin
-      - KEYCLOAK_IMPORT=/tmp/dev_realm.json
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
     volumes:
-      - ./dev_realm.json:/tmp/dev_realm.json
+      - ../dev_realm.json:/opt/keycloak/data/import/dev_realm.json

@@ -5,13 +5,13 @@
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="/favicon.png" sizes="32x32">
+    <link rel="icon" type="image/png" href="/favicon.png" sizes="96x96">
     <title>Hello from RIDSER</title>
     <style>
         body {
-            font-size: 200%
+            font-size: 200%;
         }
-
-        ;
     </style>
 </head>
 
@@ -25,6 +25,17 @@
             href="https://github.com/ErikWegner/rust-identity-service">https://github.com/ErikWegner/rust-identity-service</a>
         for more information.
     </p>
+    <p>
+        Login-Status: <span id="loginStatus"></span>
+    </p>
+    <div>
+        <h2>Actions</h2>
+        <p>
+            <button id="login" type="button">Login</button>
+            <button id="logout" type="button">Logout</button>
+        </p>
+    </div>
+    <script type="module" src="sample.js"></script>
 </body>
 
 </html>

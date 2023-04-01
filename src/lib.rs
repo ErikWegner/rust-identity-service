@@ -1,15 +1,20 @@
-use axum::{routing::get, Router};
+use std::env;
+
+use anyhow::{Context, Result};
 use http::socket_addr;
 use tokio::signal;
-use tower_http::services::{ServeDir, ServeFile};
+use tracing::debug;
 
-pub(crate) mod http;
+use crate::{auth::OIDCClient, http::app};
+
+mod auth;
+mod http;
 
 async fn shutdown_signal() {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
-            .expect("failed to install Ctrl+C handler");
+            .expect("failed to install shutdown handler");
     };
 
     #[cfg(unix)]
@@ -28,25 +33,22 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
 
-    println!("signal received, starting graceful shutdown");
+    debug!("🔽 signal received, starting graceful shutdown");
 }
 
-fn health_routes() -> Router {
-    Router::new()
-        .route("/up", get(|| async { "up" }))
-        .route("/health", get(|| async { "health" }))
-}
-
-fn app() -> Router {
-    let serve_dir = ServeDir::new("files").not_found_service(ServeFile::new("files/index.html"));
-    Router::new()
-        .nest("/app", health_routes())
-        .fallback_service(serve_dir)
+async fn init_oidc_client() -> Result<OIDCClient> {
+    let issuer_url =
+        env::var("RIDSER_OIDC_ISSUER_URL").context("missing RIDSER_OIDC_ISSUER_URL")?;
+    let client_id = env::var("RIDSER_OIDC_CLIENT_ID").context("missing RIDSER_OIDC_CLIENT_ID")?;
+    let client_secret =
+        env::var("RIDSER_OIDC_CLIENT_SECRET").context("missing RIDSER_OIDC_CLIENT_SECRET")?;
+    OIDCClient::build(&issuer_url, &client_id, &client_secret).await
 }
 
 pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
+    let oidc_client = init_oidc_client().await?;
     let bind_addr = socket_addr()?;
-    let app = app();
+    let app = app(oidc_client);
 
     tracing::info!("💈 Listening on http://{}", &bind_addr);
     axum::Server::bind(&bind_addr)
