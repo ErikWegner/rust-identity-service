@@ -9,8 +9,11 @@ edition = "2021"
 anyhow = "1.0.70"
 axum = "0.6.12"
 axum-macros = "0.3.7"
+axum-sessions = "0.5.0"
+async-redis-session = { version = "0.2.3", git = "https://github.com/ErikWegner/async-redis-session/" }
 dotenvy = "0.15.7"
 openidconnect = "2.5.1"
+redis = "0.22.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1.27.0", features = [

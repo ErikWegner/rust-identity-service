@@ -8,7 +8,10 @@ use axum::{routing::get, Extension, Router};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::{debug, warn};
 
-use crate::auth::{login, OIDCClient};
+use crate::{
+    auth::{login, OIDCClient},
+    session::RidserSessionLayer,
+};
 
 pub(crate) fn socket_addr() -> Result<SocketAddr> {
     let port_str = dotenvy::var("RIDSER_BIND_PORT").unwrap_or_else(|_| String::from("3000"));
@@ -28,8 +31,10 @@ fn health_routes() -> Router {
         .route("/health", get(|| async { "health" }))
 }
 
-fn auth_routes(oidc_client: OIDCClient) -> Router {
-    Router::new().route("/login", get(login).layer(Extension(oidc_client)))
+fn auth_routes(oidc_client: OIDCClient, session_layer: &RidserSessionLayer) -> Router {
+    Router::new()
+        .route("/login", get(login).layer(Extension(oidc_client)))
+        .layer(session_layer.clone())
 }
 
 fn walk_dir(path: &str) -> Result<Vec<String>> {
@@ -54,11 +59,11 @@ fn walk_dir(path: &str) -> Result<Vec<String>> {
     Ok(paths)
 }
 
-pub(crate) fn app(oidc_client: OIDCClient) -> Result<Router> {
+pub(crate) fn app(oidc_client: OIDCClient, session_layer: &RidserSessionLayer) -> Result<Router> {
     let spa_apps = walk_dir("files")?;
     let mut app = Router::new()
         .nest("/app", health_routes())
-        .nest("/auth", auth_routes(oidc_client));
+        .nest("/auth", auth_routes(oidc_client, session_layer));
 
     for spa_app in spa_apps {
         let uri_path = if spa_app.is_empty() {

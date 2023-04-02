@@ -2,13 +2,15 @@ use std::env;
 
 use anyhow::{Context, Result};
 use http::socket_addr;
+use session::SessionSetup;
 use tokio::signal;
 use tracing::debug;
 
-use crate::{auth::OIDCClient, http::app};
+use crate::{auth::OIDCClient, http::app, session::redis_cons};
 
 mod auth;
 mod http;
+mod session;
 
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -33,7 +35,7 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
 
-    debug!("🔽 signal received, starting graceful shutdown");
+    debug!("⏹️ signal received, starting graceful shutdown");
 }
 
 async fn init_oidc_client() -> Result<OIDCClient> {
@@ -46,10 +48,24 @@ async fn init_oidc_client() -> Result<OIDCClient> {
     OIDCClient::build(&issuer_url, &client_id, &client_secret, auth_url).await
 }
 
+fn init_session_vars() -> Result<SessionSetup> {
+    Ok(SessionSetup {
+        cookie_name: env::var("RIDSER_SESSION_COOKIE_NAME")
+            .unwrap_or_else(|_| "ridser.sid".to_string()),
+        cookie_path: env::var("RIDSER_SESSION_COOKIE_PATH").unwrap_or_else(|_| "/".to_string()),
+        secret: env::var("RIDSER_SESSION_SECRET").context("missing RIDSER_SESSION_SECRET")?,
+        ttl: None,
+    })
+}
+
 pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
+    let connection_url = env::var("RIDSER_REDIS_URL").context("missing RIDSER_REDIS_URL")?;
+    let (store, _client) = redis_cons(&connection_url)?;
+    let session_setup = init_session_vars()?;
+    let session_layer = session_setup.get_session_layer(store)?;
     let oidc_client = init_oidc_client().await?;
     let bind_addr = socket_addr()?;
-    let app = app(oidc_client);
+    let app = app(oidc_client, &session_layer);
 
     tracing::info!("💈 Listening on http://{}", &bind_addr);
     axum::Server::bind(&bind_addr)

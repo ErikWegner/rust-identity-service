@@ -76,8 +76,6 @@ impl OIDCClient {
             );
         }
 
-        //let client =
-
         let client = CoreClient::from_provider_metadata(
             provider_metadata,
             ClientId::new(client_id.to_string()),
