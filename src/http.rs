@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Context, Result};
 use axum::{routing::get, Extension, Router};
 use tower_http::services::{ServeDir, ServeFile};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::auth::{login, OIDCClient};
 
@@ -33,17 +33,21 @@ fn auth_routes(oidc_client: OIDCClient) -> Router {
 }
 
 fn walk_dir(path: &str) -> Result<Vec<String>> {
-    let mut files = std::fs::read_dir(path)?;
+    let files = std::fs::read_dir(path).context("Reading `files` directory")?;
     let mut paths = Vec::new();
-    while let Some(entry) = files.next() {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            let mut subresult = walk_dir(&entry.path().to_string_lossy())?;
-            paths.append(&mut subresult);
-        }
+    for entry in files {
+        match entry {
+            Ok(entry) => {
+                if entry.file_type()?.is_dir() {
+                    let mut subresult = walk_dir(&entry.path().to_string_lossy())?;
+                    paths.append(&mut subresult);
+                }
 
-        if entry.file_name() == "index.html" {
-            paths.push(path.strip_prefix("files").unwrap().to_string());
+                if entry.file_name() == "index.html" {
+                    paths.push(path.strip_prefix("files").unwrap().to_string());
+                }
+            }
+            Err(e) => warn!("File system error: {:?}", e),
         }
     }
 
