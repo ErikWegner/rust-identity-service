@@ -52,7 +52,7 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("💈 Listening on http://{}", &bind_addr);
     axum::Server::bind(&bind_addr)
-        .serve(app.into_make_service())
+        .serve(app?.into_make_service())
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
