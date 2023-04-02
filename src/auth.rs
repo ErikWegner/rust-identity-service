@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::{
+    extract::Query,
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
     Extension,
@@ -10,10 +11,11 @@ use openidconnect::{
     core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
     reqwest::async_http_client,
     url::Url,
-    ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge, PkceCodeVerifier,
-    RedirectUrl, Scope,
+    AuthUrl, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
+    PkceCodeVerifier, RedirectUrl, Scope,
 };
-use tracing::{debug, error};
+use serde::Deserialize;
+use tracing::{debug, error, trace};
 
 #[derive(Debug, Clone)]
 pub(crate) struct AuthorizeData {
@@ -49,13 +51,32 @@ impl OIDCClient {
         issuer_url: &str,
         client_id: &str,
         client_secret: &str,
+        authorization_endpoint: Option<String>,
     ) -> Result<Self> {
         debug!("🔎 Loading discovery document from {}", issuer_url);
-        let provider_metadata = CoreProviderMetadata::discover_async(
+        let mut provider_metadata = CoreProviderMetadata::discover_async(
             IssuerUrl::new(issuer_url.to_string())?,
             async_http_client,
         )
-        .await?;
+        .await
+        .with_context(|| format!("Loading issuer data from {issuer_url}"))?;
+
+        if let Some(authorization_endpoint_url) = authorization_endpoint {
+            trace!(
+                "Setting authorization endpoint to {}",
+                authorization_endpoint_url
+            );
+            provider_metadata = provider_metadata.set_authorization_endpoint(
+                AuthUrl::new(authorization_endpoint_url.clone()).with_context(|| {
+                    format!(
+                        "Authorization endpoint is not valid: {}",
+                        authorization_endpoint_url
+                    )
+                })?,
+            );
+        }
+
+        //let client =
 
         let client = CoreClient::from_provider_metadata(
             provider_metadata,
@@ -67,7 +88,11 @@ impl OIDCClient {
         Ok(OIDCClient { client })
     }
 
-    pub(crate) async fn authorize_data(&self, redirect_url: &str) -> Result<AuthorizeData> {
+    pub(crate) async fn authorize_data(
+        &self,
+        redirect_url: &str,
+        scope: &str,
+    ) -> Result<AuthorizeData> {
         // Generate a PKCE challenge.
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
@@ -80,7 +105,7 @@ impl OIDCClient {
                 Nonce::new_random,
             )
             // Set the desired scopes.
-            .add_scope(Scope::new("openid".to_string()))
+            .add_scope(Scope::new(scope.to_string()))
             // Set the PKCE code challenge.
             .set_pkce_challenge(pkce_challenge)
             .set_redirect_uri(Cow::Owned(RedirectUrl::new(redirect_url.to_string())?))
@@ -95,15 +120,27 @@ impl OIDCClient {
     }
 }
 
-pub(crate) async fn login(Extension(oidc_client): Extension<OIDCClient>) -> Response {
-    let d = oidc_client.authorize_data("http://redirect").await;
-    if d.is_err() {
-        error!("Failed to build authoriaztion url {:?}", d.err());
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Server failure").into_response();
-    }
-    let d = d.unwrap();
+#[derive(Debug, Deserialize)]
+pub(crate) struct LoginQueryParams {
+    #[serde(rename = "redirect_uri")]
+    redirect_uri: String,
+    #[serde(rename = "scope")]
+    scope: String,
+}
+
+pub(crate) async fn login(
+    Extension(oidc_client): Extension<OIDCClient>,
+    login_query_params: Query<LoginQueryParams>,
+) -> Result<Response, Response> {
+    let d = oidc_client
+        .authorize_data(&login_query_params.redirect_uri, &login_query_params.scope)
+        .await
+        .map_err(|e| {
+            error!("Failed to build authoriaztion url {:?}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Server failure").into_response();
+        })?;
     let auth_url = d.auth_url.as_str();
 
     tracing::debug!("login redirecting to {}", auth_url);
-    Redirect::to(auth_url).into_response()
+    Ok(Redirect::to(auth_url).into_response())
 }

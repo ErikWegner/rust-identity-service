@@ -915,6 +915,8 @@ dependencies = [
  "axum-macros",
  "dotenvy",
  "openidconnect",
+ "serde",
+ "serde_json",
  "tokio",
  "tower-http",
  "tracing",

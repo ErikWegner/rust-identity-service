@@ -42,7 +42,8 @@ async fn init_oidc_client() -> Result<OIDCClient> {
     let client_id = env::var("RIDSER_OIDC_CLIENT_ID").context("missing RIDSER_OIDC_CLIENT_ID")?;
     let client_secret =
         env::var("RIDSER_OIDC_CLIENT_SECRET").context("missing RIDSER_OIDC_CLIENT_SECRET")?;
-    OIDCClient::build(&issuer_url, &client_id, &client_secret).await
+    let auth_url = env::var("RIDSER_OIDC_AUTH_URL").ok();
+    OIDCClient::build(&issuer_url, &client_id, &client_secret, auth_url).await
 }
 
 pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {

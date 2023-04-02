@@ -60,23 +60,18 @@ pub(crate) fn app(oidc_client: OIDCClient) -> Result<Router> {
         .nest("/app", health_routes())
         .nest("/auth", auth_routes(oidc_client));
 
-    let mut v_iter = spa_apps.into_iter();
-    'iterloop: loop {
-        if let Some(spa_app) = v_iter.next() {
-            let uri_path = if spa_app.is_empty() {
-                "/".to_string()
-            } else {
-                spa_app.clone()
-            };
-            let fs_path = format!("files{}", spa_app);
-            debug!("Serving route {uri_path} from fs {fs_path}");
-            let serve_dir = ServeDir::new(fs_path.clone())
-                .not_found_service(ServeFile::new(format!("{fs_path}/index.html")));
-
-            app = app.nest_service(&uri_path, serve_dir);
+    for spa_app in spa_apps {
+        let uri_path = if spa_app.is_empty() {
+            "/".to_string()
         } else {
-            break 'iterloop;
-        }
+            spa_app.clone()
+        };
+        let fs_path = format!("files{}", spa_app);
+        debug!("Serving route {uri_path} from fs {fs_path}");
+        let serve_dir = ServeDir::new(fs_path.clone())
+            .not_found_service(ServeFile::new(format!("{fs_path}/index.html")));
+
+        app = app.nest_service(&uri_path, serve_dir);
     }
 
     Ok(app)
