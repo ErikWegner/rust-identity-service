@@ -230,7 +230,7 @@ pub(crate) async fn login(
         .await
         .map_err(|e| {
             error!("Failed to build authoriaztion url {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Server failure").into_response();
+            (StatusCode::INTERNAL_SERVER_ERROR, "Server failure").into_response()
         })?;
     let auth_url = d.auth_url.as_str();
 
