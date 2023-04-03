@@ -659,7 +659,7 @@
     "alwaysDisplayInConsole" : false,
     "clientAuthenticatorType" : "client-secret",
     "secret" : "8d476311-2577-4104-b9e4-7dc2cc381be8",
-    "redirectUris" : [ "http://localhost:3000/auth/callback*" ],
+    "redirectUris" : [ "http://localhost:3000/auth/callback" ],
     "webOrigins" : [ ],
     "notBefore" : 0,
     "bearerOnly" : false,

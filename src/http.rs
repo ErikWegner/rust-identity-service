@@ -9,7 +9,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::{debug, warn};
 
 use crate::{
-    auth::{login, OIDCClient},
+    auth::{callback, login, OIDCClient},
     session::RidserSessionLayer,
 };
 
@@ -33,7 +33,8 @@ fn health_routes() -> Router {
 
 fn auth_routes(oidc_client: OIDCClient, session_layer: &RidserSessionLayer) -> Router {
     Router::new()
-        .route("/login", get(login).layer(Extension(oidc_client)))
+        .route("/login", get(login).layer(Extension(oidc_client.clone())))
+        .route("/callback", get(callback).layer(Extension(oidc_client)))
         .layer(session_layer.clone())
 }
 
