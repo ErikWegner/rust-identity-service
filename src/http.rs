@@ -4,14 +4,13 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use axum::{routing::get, Extension, Router};
+use axum::{routing::get, Router};
 use redis::Client;
-use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::{debug, warn};
 
 use crate::{
-    auth::{callback, login, OIDCClient},
+    auth::{auth_routes, OIDCClient},
     session::RidserSessionLayer,
 };
 
@@ -31,31 +30,6 @@ fn health_routes() -> Router {
     Router::new()
         .route("/up", get(|| async { "up" }))
         .route("/health", get(|| async { "health" }))
-}
-
-fn auth_routes(
-    oidc_client: OIDCClient,
-    session_layer: &RidserSessionLayer,
-    client: Client,
-) -> Router {
-    Router::new()
-        .route(
-            "/login",
-            get(login).layer(
-                ServiceBuilder::new()
-                    .layer(Extension(oidc_client.clone()))
-                    .layer(Extension(client.clone())),
-            ),
-        )
-        .route(
-            "/callback",
-            get(callback).layer(
-                ServiceBuilder::new()
-                    .layer(Extension(oidc_client.clone()))
-                    .layer(Extension(client.clone())),
-            ),
-        )
-        .layer(session_layer.clone())
 }
 
 fn walk_dir(path: &str) -> Result<Vec<String>> {
