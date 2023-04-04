@@ -11,7 +11,10 @@ use redis::Client;
 use serde::Deserialize;
 use tracing::{debug, error};
 
-use crate::{auth::LoginCallbackSessionParameters, session::purge_store_and_regenerate_session};
+use crate::{
+    auth::{oidcclient::AuthorizeRequestData, LoginCallbackSessionParameters},
+    session::purge_store_and_regenerate_session,
+};
 
 use super::OIDCClient;
 
@@ -23,6 +26,8 @@ pub(crate) struct LoginQueryParams {
     redirect_uri: String,
     #[serde(rename = "scope")]
     scope: String,
+    #[serde(rename = "state")]
+    state: String,
 }
 
 #[debug_handler]
@@ -34,7 +39,11 @@ pub(crate) async fn login(
 ) -> Result<Response, Response> {
     purge_store_and_regenerate_session(&mut session, client).await;
     let d = oidc_client
-        .authorize_data(&login_query_params.redirect_uri, &login_query_params.scope)
+        .authorize_data(AuthorizeRequestData {
+            redirect_uri: login_query_params.redirect_uri.clone(),
+            state: login_query_params.state.clone(),
+            scope: login_query_params.scope.clone(),
+        })
         .await
         .map_err(|e| {
             error!("Failed to build authoriaztion url {:?}", e);
@@ -60,8 +69,13 @@ pub(crate) async fn login(
 
 #[cfg(test)]
 mod tests {
-    use axum::{body::Body, http::Request};
-    use hyper::header::{COOKIE, SET_COOKIE};
+    use axum::{
+        body::Body,
+        http::{
+            header::{COOKIE, SET_COOKIE},
+            Request,
+        },
+    };
     use tower::{Service, ServiceExt};
 
     use crate::auth::tests::MockSetup;
@@ -78,7 +92,7 @@ mod tests {
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid")
+                    .uri("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid&state=xyz")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -108,7 +122,7 @@ mod tests {
         let m = MockSetup::new().await;
         let mut app = m.router();
         let uri =
-            "/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid";
+            "/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid&state=xyz";
 
         // Act
         let request = Request::builder().uri(uri).body(Body::empty()).unwrap();

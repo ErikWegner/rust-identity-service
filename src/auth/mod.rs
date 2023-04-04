@@ -1,29 +1,21 @@
+mod callback;
 mod login;
 mod oidcclient;
 
 pub use oidcclient::OIDCClient;
 
-use anyhow::Result;
-use axum::{
-    extract::Query,
-    http::StatusCode,
-    response::{IntoResponse, Redirect, Response},
-    routing::get,
-    Extension, Router,
-};
-use axum_macros::debug_handler;
-use axum_sessions::extractors::WritableSession;
+use axum::{routing::get, Extension, Router};
+
 use openidconnect::{
     core::CoreIdToken, url::Url, AccessToken, CsrfToken, Nonce, PkceCodeVerifier, RefreshToken,
 };
 use redis::Client;
 use serde::{Deserialize, Serialize};
 use tower::ServiceBuilder;
-use tracing::info;
 
-use crate::session::{purge_store_and_regenerate_session, RidserSessionLayer};
+use crate::session::RidserSessionLayer;
 
-use self::login::login;
+use self::{callback::callback, login::login};
 
 #[derive(Debug, Clone)]
 pub(crate) struct AuthorizeData {
@@ -49,14 +41,6 @@ impl AuthorizeData {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct TokenExchangeData {
-    code: String,
-    nonce: String,
-    pkce_verifier: String,
-    redirect_uri: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SessionTokens {
     access_token: String,
@@ -78,12 +62,6 @@ impl SessionTokens {
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct CallbackQueryParams {
-    code: String,
-    state: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct LoginCallbackSessionParameters {
     app_uri: String,
@@ -92,42 +70,6 @@ pub(crate) struct LoginCallbackSessionParameters {
     pkce_verifier: String,
     redirect_uri: String,
     scopes: String,
-}
-
-#[debug_handler]
-pub(crate) async fn callback(
-    Extension(oidc_client): Extension<OIDCClient>,
-    Extension(client): Extension<Client>,
-    mut session: WritableSession,
-    callback_query_params: Query<CallbackQueryParams>,
-) -> Result<Response, Response> {
-    let login_callback_session_params = session
-        .get::<LoginCallbackSessionParameters>("ridser_logincallback_parameters")
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Invalid session").into_response())?;
-    session.remove("ridser_logincallback_parameters");
-
-    if callback_query_params.state != login_callback_session_params.csrf_token {
-        return Err((StatusCode::BAD_REQUEST, "Invalid request").into_response());
-    }
-
-    let jwt = oidc_client
-        .exchange_code(TokenExchangeData {
-            code: callback_query_params.code.clone(),
-            nonce: login_callback_session_params.nonce,
-            pkce_verifier: login_callback_session_params.pkce_verifier,
-            redirect_uri: login_callback_session_params.redirect_uri.clone(),
-        })
-        .await
-        .map_err(|e| {
-            info!("Failed to exchange code: {:?}", e);
-            (StatusCode::UNAUTHORIZED, "Login failure").into_response()
-        })?;
-
-    purge_store_and_regenerate_session(&mut session, client).await;
-
-    let _ = session.insert("ridser_jwt", jwt);
-
-    Ok(Redirect::to(&login_callback_session_params.app_uri).into_response())
 }
 
 pub(crate) fn auth_routes(
@@ -157,18 +99,24 @@ pub(crate) fn auth_routes(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::sync::Arc;
 
-    use axum::Router;
+    use axum::{http::HeaderValue, Router};
+    use axum_sessions::async_session::chrono::{Duration, Utc};
+    use once_cell::sync::Lazy;
     use openidconnect::{
         core::{
-            CoreClaimName, CoreJsonWebKeySet, CoreJwsSigningAlgorithm, CoreProviderMetadata,
-            CoreResponseType, CoreRsaPrivateSigningKey, CoreSubjectIdentifierType,
+            CoreClaimName, CoreIdToken, CoreIdTokenClaims, CoreIdTokenFields, CoreJsonWebKeySet,
+            CoreJwsSigningAlgorithm, CoreProviderMetadata, CoreResponseType,
+            CoreRsaPrivateSigningKey, CoreSubjectIdentifierType, CoreTokenResponse, CoreTokenType,
         },
-        AuthUrl, EmptyAdditionalProviderMetadata, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl,
-        PrivateSigningKey, ResponseTypes, Scope, TokenUrl, UserInfoUrl,
+        AccessToken, Audience, AuthUrl, EmptyAdditionalClaims, EmptyAdditionalProviderMetadata,
+        EmptyExtraTokenFields, EndUserEmail, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl, Nonce,
+        PrivateSigningKey, ResponseTypes, Scope, StandardClaims, SubjectIdentifier, TokenUrl,
+        UserInfoUrl,
     };
     use rand::{distributions::Alphanumeric, Rng};
+    use tracing_subscriber::filter::EnvFilter;
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -177,6 +125,17 @@ mod tests {
     use crate::session::{redis_cons, SessionSetup};
 
     use super::{auth_routes, OIDCClient};
+
+    static GLOBAL_LOGGER_SETUP: Lazy<Arc<bool>> = Lazy::new(|| {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::builder()
+                    .with_default_directive("ridser=debug".parse().expect("Directive should parse"))
+                    .from_env_lossy(),
+            )
+            .init();
+        Arc::new(true)
+    });
 
     fn oidc_body(issuer: &str) -> String {
         let provider_metadata = CoreProviderMetadata::new(
@@ -200,7 +159,7 @@ mod tests {
             // The Public subject identifier type is also supported.
             vec![CoreSubjectIdentifierType::Pairwise],
             // Support the RS256 signature algorithm.
-            vec![CoreJwsSigningAlgorithm::RsaSsaPssSha256],
+            vec![CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256],
             // OpenID Connect Providers may supply custom metadata by providing a struct that
             // implements the AdditionalProviderMetadata trait. This requires manually using the
             // generic ProviderMetadata struct rather than the CoreProviderMetadata type alias,
@@ -259,18 +218,98 @@ mod tests {
         serde_json::to_string(&jwks).expect("Serialize JSON Web Key Set")
     }
 
+    fn oidc_token(issuer: &str, client_id: &str, nonce: &str) -> String {
+        let opaque_access_token = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(32)
+            .map(char::from)
+            .collect::<String>();
+        let access_token = AccessToken::new(opaque_access_token);
+
+        let rsa_pem = include_bytes!("../../test.pem");
+        let rsa_pem: String = String::from_utf8(rsa_pem.to_vec()).expect("Read test.pem");
+        let id_token = CoreIdToken::new(
+            CoreIdTokenClaims::new(
+                // Specify the issuer URL for the OpenID Connect Provider.
+                IssuerUrl::new(issuer.to_string()).expect("Invalid issuer URL"),
+                // The audience is usually a single entry with the client ID of the client for whom
+                // the ID token is intended. This is a required claim.
+                vec![Audience::new(client_id.to_string())],
+                // The ID token expiration is usually much shorter than that of the access or refresh
+                // tokens issued to clients.
+                Utc::now() + Duration::seconds(300),
+                // The issue time is usually the current time.
+                Utc::now(),
+                // Set the standard claims defined by the OpenID Connect Core spec.
+                StandardClaims::new(
+                    // Stable subject identifiers are recommended in place of e-mail addresses or other
+                    // potentially unstable identifiers. This is the only required claim.
+                    SubjectIdentifier::new("5f83e0ca-2b8e-4e8c-ba0a-f80fe9bc3632".to_string()),
+                )
+                // Optional: specify the user's e-mail address. This should only be provided if the
+                // client has been granted the 'profile' or 'email' scopes.
+                .set_email(Some(EndUserEmail::new("bob@example.com".to_string())))
+                // Optional: specify whether the provider has verified the user's e-mail address.
+                .set_email_verified(Some(true)),
+                // OpenID Connect Providers may supply custom claims by providing a struct that
+                // implements the AdditionalClaims trait. This requires manually using the
+                // generic IdTokenClaims struct rather than the CoreIdTokenClaims type alias,
+                // however.
+                EmptyAdditionalClaims {},
+            )
+            .set_nonce(Some(Nonce::new(nonce.to_string()))),
+            // The private key used for signing the ID token. For confidential clients (those able
+            // to maintain a client secret), a CoreHmacKey can also be used, in conjunction
+            // with one of the CoreJwsSigningAlgorithm::HmacSha* signing algorithms. When using an
+            // HMAC-based signing algorithm, the UTF-8 representation of the client secret should
+            // be used as the HMAC key.
+            &CoreRsaPrivateSigningKey::from_pem(
+                &rsa_pem,
+                Some(JsonWebKeyId::new("key1".to_string())),
+            )
+            .expect("Invalid RSA private key"),
+            // Uses the RS256 signature algorithm. This crate supports any RS*, PS*, or HS*
+            // signature algorithm.
+            CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
+            // When returning the ID token alongside an access token (e.g., in the Authorization Code
+            // flow), it is recommended to pass the access token here to set the `at_hash` claim
+            // automatically.
+            Some(&access_token),
+            // When returning the ID token alongside an authorization code (e.g., in the implicit
+            // flow), it is recommended to pass the authorization code here to set the `c_hash` claim
+            // automatically.
+            None,
+        )
+        .expect("Invalid ID token");
+
+        let token_response = CoreTokenResponse::new(
+            access_token,
+            CoreTokenType::Bearer,
+            CoreIdTokenFields::new(Some(id_token), EmptyExtraTokenFields {}),
+        );
+        serde_json::to_string(&token_response).expect("Serialize token response")
+    }
+
     pub struct MockSetup {
-        issuer: String,
-        server: MockServer,
         oidc_client: OIDCClient,
         session_layer: axum_sessions::SessionLayer<async_redis_session::RedisSessionStore>,
         redis_client: redis::Client,
+        mock_server: MockServer,
+        issuer_url: String,
+        client_id: String,
     }
 
     impl MockSetup {
         pub(crate) async fn new() -> Self {
+            let _b = GLOBAL_LOGGER_SETUP.clone();
             let mock_server = MockServer::start().await;
             let issuer_url = format!("{}/testing-issuer", mock_server.uri());
+            let client_id = "test-client".to_string();
+            let client_secret: String = rand::thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(20)
+                .map(char::from)
+                .collect();
             Mock::given(method("GET"))
                 .and(path("/testing-issuer/.well-known/openid-configuration"))
                 .respond_with(
@@ -286,12 +325,6 @@ mod tests {
                 )
                 .mount(&mock_server)
                 .await;
-            let client_id = "test-client".to_string();
-            let client_secret: String = rand::thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(20)
-                .map(char::from)
-                .collect();
             let auth_url = format!("{}/authorize", mock_server.uri());
             let oidc_client =
                 OIDCClient::build(&issuer_url, &client_id, &client_secret, Some(auth_url))
@@ -309,17 +342,18 @@ mod tests {
                 secret: session_secret,
                 cookie_name: "testing.sid".to_string(),
                 cookie_path: "/".to_string(),
-                ttl: Some(Duration::from_secs(300)),
+                ttl: Some(std::time::Duration::from_secs(300)),
             };
             let session_layer = session_setup
                 .get_session_layer(session_store)
                 .expect("Session setup failed");
 
             Self {
+                client_id,
+                issuer_url,
+                mock_server,
                 redis_client,
-                issuer: issuer_url,
                 oidc_client,
-                server: mock_server,
                 session_layer,
             }
         }
@@ -333,6 +367,27 @@ mod tests {
                     self.redis_client.clone(),
                 ),
             )
+        }
+
+        pub async fn setup_id_token_nonce(&self, header: &HeaderValue) {
+            let nonce: String = header
+                .to_str()
+                .unwrap()
+                .split('&')
+                .find(|s| s.starts_with("nonce"))
+                .expect("Redirect uri should have nonce")
+                .split('=')
+                .skip(1)
+                .take(1)
+                .collect();
+            Mock::given(method("POST"))
+                .and(path("/testing-issuer/token"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    oidc_token(&self.issuer_url, &self.client_id, &nonce),
+                    "application/json",
+                ))
+                .mount(&self.mock_server)
+                .await;
         }
     }
 }

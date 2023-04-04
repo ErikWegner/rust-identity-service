@@ -10,11 +10,17 @@ use openidconnect::{
 };
 use tracing::{debug, trace};
 
-use super::{AuthorizeData, SessionTokens, TokenExchangeData};
+use super::{callback::TokenExchangeData, AuthorizeData, SessionTokens};
 
 #[derive(Debug, Clone)]
 pub struct OIDCClient {
     client: CoreClient,
+}
+
+pub(crate) struct AuthorizeRequestData {
+    pub(crate) redirect_uri: String,
+    pub(crate) state: String,
+    pub(crate) scope: String,
 }
 
 impl OIDCClient {
@@ -57,8 +63,7 @@ impl OIDCClient {
 
     pub(crate) async fn authorize_data(
         &self,
-        redirect_url: &str,
-        scope: &str,
+        authorize_request: AuthorizeRequestData,
     ) -> Result<AuthorizeData> {
         // Generate a PKCE challenge.
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
@@ -68,14 +73,16 @@ impl OIDCClient {
             .client
             .authorize_url(
                 CoreAuthenticationFlow::AuthorizationCode,
-                CsrfToken::new_random,
+                || CsrfToken::new(authorize_request.state),
                 Nonce::new_random,
             )
             // Set the desired scopes.
-            .add_scope(Scope::new(scope.to_string()))
+            .add_scope(Scope::new(authorize_request.scope))
             // Set the PKCE code challenge.
             .set_pkce_challenge(pkce_challenge)
-            .set_redirect_uri(Cow::Owned(RedirectUrl::new(redirect_url.to_string())?))
+            .set_redirect_uri(Cow::Owned(RedirectUrl::new(
+                authorize_request.redirect_uri,
+            )?))
             .url();
 
         Ok(AuthorizeData::new(
@@ -100,9 +107,15 @@ impl OIDCClient {
                     openidconnect::RequestTokenError::ServerResponse(response) => {
                         debug!("Server response: {:?}", response);
                     }
-                    openidconnect::RequestTokenError::Request(_) => todo!(),
-                    openidconnect::RequestTokenError::Parse(_, _) => todo!(),
-                    openidconnect::RequestTokenError::Other(_) => todo!(),
+                    openidconnect::RequestTokenError::Request(err) => {
+                        debug!("Request error: {:?}", err)
+                    }
+                    openidconnect::RequestTokenError::Parse(serde_error, _) => {
+                        debug!("Parse error: {:?}", serde_error)
+                    }
+                    openidconnect::RequestTokenError::Other(err) => {
+                        debug!("Other error: {:?}", err)
+                    }
                 }
                 anyhow!("Token exchange failed")
             })?;
