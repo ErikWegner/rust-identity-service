@@ -154,3 +154,185 @@ pub(crate) fn auth_routes(
         )
         .layer(session_layer.clone())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use axum::Router;
+    use openidconnect::{
+        core::{
+            CoreClaimName, CoreJsonWebKeySet, CoreJwsSigningAlgorithm, CoreProviderMetadata,
+            CoreResponseType, CoreRsaPrivateSigningKey, CoreSubjectIdentifierType,
+        },
+        AuthUrl, EmptyAdditionalProviderMetadata, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl,
+        PrivateSigningKey, ResponseTypes, Scope, TokenUrl, UserInfoUrl,
+    };
+    use rand::{distributions::Alphanumeric, Rng};
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    use crate::session::{redis_cons, SessionSetup};
+
+    use super::{auth_routes, OIDCClient};
+
+    fn oidc_body(issuer: &str) -> String {
+        let provider_metadata = CoreProviderMetadata::new(
+            // Parameters required by the OpenID Connect Discovery spec.
+            IssuerUrl::new(issuer.to_string()).expect("Invalid issuer URL"),
+            AuthUrl::new(format!("{issuer}/authorize")).expect("Auth URL is invalid"),
+            // Use the JsonWebKeySet struct to serve the JWK Set at this URL.
+            JsonWebKeySetUrl::new(format!("{issuer}/.well-known/jwks.json"))
+                .expect("JWK Set URL is invalid"),
+            // Supported response types (flows).
+            vec![
+                // Recommended: support the code flow.
+                ResponseTypes::new(vec![CoreResponseType::Code]),
+                // Optional: support the implicit flow.
+                //ResponseTypes::new(vec![CoreResponseType::Token, CoreResponseType::IdToken]), // Other flows including hybrid flows may also be specified here.
+            ],
+            // For user privacy, the Pairwise subject identifier type is preferred. This prevents
+            // distinct relying parties (clients) from knowing whether their users represent the same
+            // real identities. This identifier type is only useful for relying parties that don't
+            // receive the 'email', 'profile' or other personally-identifying scopes.
+            // The Public subject identifier type is also supported.
+            vec![CoreSubjectIdentifierType::Pairwise],
+            // Support the RS256 signature algorithm.
+            vec![CoreJwsSigningAlgorithm::RsaSsaPssSha256],
+            // OpenID Connect Providers may supply custom metadata by providing a struct that
+            // implements the AdditionalProviderMetadata trait. This requires manually using the
+            // generic ProviderMetadata struct rather than the CoreProviderMetadata type alias,
+            // however.
+            EmptyAdditionalProviderMetadata {},
+        )
+        // Specify the token endpoint (required for the code flow).
+        .set_token_endpoint(Some(
+            TokenUrl::new(format!("{issuer}/token")).expect("Invalid token URL"),
+        ))
+        // Recommended: support the UserInfo endpoint.
+        .set_userinfo_endpoint(Some(
+            UserInfoUrl::new(format!("{issuer}/userinfo")).expect("userinfo endpoint is invalid"),
+        ))
+        // Recommended: specify the supported scopes.
+        .set_scopes_supported(Some(vec![
+            Scope::new("openid".to_string()),
+            Scope::new("email".to_string()),
+            Scope::new("profile".to_string()),
+        ]))
+        // Recommended: specify the supported ID token claims.
+        .set_claims_supported(Some(vec![
+            // Providers may also define an enum instead of using CoreClaimName.
+            CoreClaimName::new("sub".to_string()),
+            CoreClaimName::new("aud".to_string()),
+            CoreClaimName::new("email".to_string()),
+            CoreClaimName::new("email_verified".to_string()),
+            CoreClaimName::new("exp".to_string()),
+            CoreClaimName::new("iat".to_string()),
+            CoreClaimName::new("iss".to_string()),
+            CoreClaimName::new("name".to_string()),
+            CoreClaimName::new("given_name".to_string()),
+            CoreClaimName::new("family_name".to_string()),
+            CoreClaimName::new("picture".to_string()),
+            CoreClaimName::new("locale".to_string()),
+        ]));
+
+        serde_json::to_string(&provider_metadata).expect("Serialize ProviderMetadata")
+    }
+
+    fn oidc_keys() -> String {
+        let rsa_pem = include_bytes!("../../test.pem");
+        let rsa_pem: String = String::from_utf8(rsa_pem.to_vec()).expect("Read test.pem");
+        let jwks = CoreJsonWebKeySet::new(vec![
+            // RSA keys may also be constructed directly using CoreJsonWebKey::new_rsa(). Providers
+            // aiming to support other key types may provide their own implementation of the
+            // JsonWebKey trait or submit a PR to add the desired support to this crate.
+            CoreRsaPrivateSigningKey::from_pem(
+                &rsa_pem,
+                Some(JsonWebKeyId::new("key1".to_string())),
+            )
+            .expect("Invalid RSA private key")
+            .as_verification_key(),
+        ]);
+
+        serde_json::to_string(&jwks).expect("Serialize JSON Web Key Set")
+    }
+
+    pub struct MockSetup {
+        issuer: String,
+        server: MockServer,
+        oidc_client: OIDCClient,
+        session_layer: axum_sessions::SessionLayer<async_redis_session::RedisSessionStore>,
+        redis_client: redis::Client,
+    }
+
+    impl MockSetup {
+        pub(crate) async fn new() -> Self {
+            let mock_server = MockServer::start().await;
+            let issuer_url = format!("{}/testing-issuer", mock_server.uri());
+            Mock::given(method("GET"))
+                .and(path("/testing-issuer/.well-known/openid-configuration"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_raw(oidc_body(&issuer_url), "application/json"),
+                )
+                .mount(&mock_server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/testing-issuer/.well-known/jwks.json"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_raw(oidc_keys(), "application/json"),
+                )
+                .mount(&mock_server)
+                .await;
+            let client_id = "test-client".to_string();
+            let client_secret: String = rand::thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(20)
+                .map(char::from)
+                .collect();
+            let auth_url = format!("{}/authorize", mock_server.uri());
+            let oidc_client =
+                OIDCClient::build(&issuer_url, &client_id, &client_secret, Some(auth_url))
+                    .await
+                    .expect("OIDCClient creation failed");
+
+            let session_secret: String = rand::thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(64)
+                .map(char::from)
+                .collect();
+            let (session_store, redis_client) =
+                redis_cons("redis://redis/").expect("Redis setup failed");
+            let session_setup = SessionSetup {
+                secret: session_secret,
+                cookie_name: "testing.sid".to_string(),
+                cookie_path: "/".to_string(),
+                ttl: Some(Duration::from_secs(300)),
+            };
+            let session_layer = session_setup
+                .get_session_layer(session_store)
+                .expect("Session setup failed");
+
+            Self {
+                redis_client,
+                issuer: issuer_url,
+                oidc_client,
+                server: mock_server,
+                session_layer,
+            }
+        }
+
+        pub fn router(&self) -> Router {
+            Router::new().nest(
+                "/auth",
+                auth_routes(
+                    self.oidc_client.clone(),
+                    &self.session_layer,
+                    self.redis_client.clone(),
+                ),
+            )
+        }
+    }
+}

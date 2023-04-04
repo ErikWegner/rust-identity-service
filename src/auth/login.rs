@@ -57,3 +57,48 @@ pub(crate) async fn login(
     debug!("login redirecting to {}", auth_url);
     Ok(Redirect::to(auth_url).into_response())
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+
+    use crate::auth::tests::MockSetup;
+
+    use super::*;
+
+    // Tokio async test
+    #[tokio::test]
+    async fn test_login_sends_redirect() {
+        // Arrange
+        let m = MockSetup::new().await;
+        let app = m.router();
+
+        // Act
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = String::from_utf8(
+            hyper::body::to_bytes(response.into_body())
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+
+        // Assert
+        assert_eq!(
+            status,
+            StatusCode::SEE_OTHER,
+            "response should be redirect, but {}",
+            body
+        );
+    }
+}
