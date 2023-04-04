@@ -61,13 +61,13 @@ pub(crate) async fn login(
 #[cfg(test)]
 mod tests {
     use axum::{body::Body, http::Request};
-    use tower::ServiceExt;
+    use hyper::header::{COOKIE, SET_COOKIE};
+    use tower::{Service, ServiceExt};
 
     use crate::auth::tests::MockSetup;
 
     use super::*;
 
-    // Tokio async test
     #[tokio::test]
     async fn test_login_sends_redirect() {
         // Arrange
@@ -99,6 +99,47 @@ mod tests {
             StatusCode::SEE_OTHER,
             "response should be redirect, but {}",
             body
+        );
+    }
+
+    #[tokio::test]
+    async fn test_login_sends_new_session_cookie() {
+        // Arrange
+        let m = MockSetup::new().await;
+        let mut app = m.router();
+        let uri =
+            "/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid";
+
+        // Act
+        let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let response1 = app.ready().await.unwrap().call(request).await.unwrap();
+        let status1 = response1.status();
+        let cookie1 = response1.headers().get(SET_COOKIE).unwrap();
+
+        let request = Request::builder()
+            .uri(uri)
+            .header(COOKIE, cookie1.clone())
+            .body(Body::empty())
+            .unwrap();
+        let response2 = app.ready().await.unwrap().call(request).await.unwrap();
+        let status2 = response2.status();
+        let cookie2 = response2.headers().get(SET_COOKIE).unwrap();
+
+        // Assert
+        assert_eq!(
+            status1,
+            StatusCode::SEE_OTHER,
+            "response1 should be redirect"
+        );
+        assert_eq!(
+            status2,
+            StatusCode::SEE_OTHER,
+            "response2 should be redirect"
+        );
+        assert_ne!(
+            cookie1.to_str().unwrap(),
+            cookie2.to_str().unwrap(),
+            "Second cookie should be different"
         );
     }
 }
