@@ -7,6 +7,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     Extension,
 };
+use axum_macros::debug_handler;
 use axum_sessions::extractors::WritableSession;
 use openidconnect::{
     core::{CoreAuthenticationFlow, CoreClient, CoreIdToken, CoreProviderMetadata},
@@ -16,8 +17,11 @@ use openidconnect::{
     IssuerUrl, Nonce, OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl,
     RefreshToken, Scope, TokenResponse,
 };
+use redis::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, trace};
+
+use crate::session::purge_store_and_regenerate_session;
 
 #[derive(Debug, Clone)]
 pub(crate) struct AuthorizeData {
@@ -219,12 +223,14 @@ pub(crate) struct LoginCallbackSessionParameters {
     scopes: String,
 }
 
+#[debug_handler]
 pub(crate) async fn login(
     Extension(oidc_client): Extension<OIDCClient>,
+    Extension(client): Extension<Client>,
     mut session: WritableSession,
     login_query_params: Query<LoginQueryParams>,
 ) -> Result<Response, Response> {
-    session.regenerate();
+    purge_store_and_regenerate_session(&mut session, client).await;
     let d = oidc_client
         .authorize_data(&login_query_params.redirect_uri, &login_query_params.scope)
         .await
@@ -250,8 +256,10 @@ pub(crate) async fn login(
     Ok(Redirect::to(auth_url).into_response())
 }
 
+#[debug_handler]
 pub(crate) async fn callback(
     Extension(oidc_client): Extension<OIDCClient>,
+    Extension(client): Extension<Client>,
     mut session: WritableSession,
     callback_query_params: Query<CallbackQueryParams>,
 ) -> Result<Response, Response> {
@@ -277,7 +285,7 @@ pub(crate) async fn callback(
             (StatusCode::UNAUTHORIZED, "Login failure").into_response()
         })?;
 
-    session.regenerate();
+    purge_store_and_regenerate_session(&mut session, client).await;
 
     let _ = session.insert("ridser_jwt", jwt);
 

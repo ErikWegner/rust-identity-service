@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use async_redis_session::RedisSessionStore;
-use axum_sessions::{PersistencePolicy, SameSite, SessionLayer};
-use redis::Client;
+use axum_sessions::{extractors::WritableSession, PersistencePolicy, SameSite, SessionLayer};
+use redis::{AsyncCommands, Client};
 use tracing::debug;
 
 pub(crate) type RidserSessionLayer = SessionLayer<RedisSessionStore>;
@@ -41,4 +41,17 @@ pub(crate) fn redis_cons(connection_url: &str) -> Result<(RedisSessionStore, Cli
     let client = Client::open(connection_url)
         .with_context(|| format!("Failed to connect to redis at {connection_url}"))?;
     Ok((store, client))
+}
+
+/// Remove the data associated with the session identifier from the store.
+/// Create a new session
+pub(crate) async fn purge_store_and_regenerate_session(
+    session: &mut WritableSession,
+    client: Client,
+) {
+    if let Ok(mut connection) = client.get_async_connection().await {
+        let key = session.id().to_string();
+        let _ = connection.del::<_, String>(&key).await;
+    }
+    session.regenerate();
 }
