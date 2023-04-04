@@ -5,6 +5,8 @@ use std::{
 
 use anyhow::{Context, Result};
 use axum::{routing::get, Extension, Router};
+use redis::Client;
+use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::{debug, warn};
 
@@ -31,10 +33,28 @@ fn health_routes() -> Router {
         .route("/health", get(|| async { "health" }))
 }
 
-fn auth_routes(oidc_client: OIDCClient, session_layer: &RidserSessionLayer) -> Router {
+fn auth_routes(
+    oidc_client: OIDCClient,
+    session_layer: &RidserSessionLayer,
+    client: Client,
+) -> Router {
     Router::new()
-        .route("/login", get(login).layer(Extension(oidc_client.clone())))
-        .route("/callback", get(callback).layer(Extension(oidc_client)))
+        .route(
+            "/login",
+            get(login).layer(
+                ServiceBuilder::new()
+                    .layer(Extension(oidc_client.clone()))
+                    .layer(Extension(client.clone())),
+            ),
+        )
+        .route(
+            "/callback",
+            get(callback).layer(
+                ServiceBuilder::new()
+                    .layer(Extension(oidc_client.clone()))
+                    .layer(Extension(client.clone())),
+            ),
+        )
         .layer(session_layer.clone())
 }
 
@@ -60,11 +80,15 @@ fn walk_dir(path: &str) -> Result<Vec<String>> {
     Ok(paths)
 }
 
-pub(crate) fn app(oidc_client: OIDCClient, session_layer: &RidserSessionLayer) -> Result<Router> {
+pub(crate) fn app(
+    oidc_client: OIDCClient,
+    session_layer: &RidserSessionLayer,
+    client: Client,
+) -> Result<Router> {
     let spa_apps = walk_dir("files")?;
     let mut app = Router::new()
         .nest("/app", health_routes())
-        .nest("/auth", auth_routes(oidc_client, session_layer));
+        .nest("/auth", auth_routes(oidc_client, session_layer, client));
 
     for spa_app in spa_apps {
         let uri_path = if spa_app.is_empty() {

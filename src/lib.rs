@@ -60,12 +60,12 @@ fn init_session_vars() -> Result<SessionSetup> {
 
 pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
     let connection_url = env::var("RIDSER_REDIS_URL").context("missing RIDSER_REDIS_URL")?;
-    let (store, _client) = redis_cons(&connection_url)?;
+    let (store, client) = redis_cons(&connection_url)?;
     let session_setup = init_session_vars()?;
     let session_layer = session_setup.get_session_layer(store)?;
     let oidc_client = init_oidc_client().await?;
     let bind_addr = socket_addr()?;
-    let app = app(oidc_client, &session_layer);
+    let app = app(oidc_client, &session_layer, client);
 
     tracing::info!("💈 Listening on http://{}", &bind_addr);
     axum::Server::bind(&bind_addr)
