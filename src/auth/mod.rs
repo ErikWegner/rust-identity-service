@@ -60,6 +60,10 @@ impl SessionTokens {
             id_token: id_token.to_string(),
         }
     }
+
+    pub(crate) fn access_token(&self) -> &str {
+        &self.access_token
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

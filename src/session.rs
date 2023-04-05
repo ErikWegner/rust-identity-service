@@ -8,6 +8,9 @@ use tracing::debug;
 
 pub(crate) type RidserSessionLayer = SessionLayer<RedisSessionStore>;
 
+pub(crate) static SESSION_KEY_CSRF_TOKEN: &str = "ridser_csrf_token";
+pub(crate) static SESSION_KEY_JWT: &str = "ridser_jwt";
+
 #[derive(Debug, Clone)]
 pub(crate) struct SessionSetup {
     pub(crate) secret: String,
@@ -17,13 +20,13 @@ pub(crate) struct SessionSetup {
 }
 
 impl SessionSetup {
-    pub(crate) fn get_session_layer(self, store: RedisSessionStore) -> Result<RidserSessionLayer> {
+    pub(crate) fn get_session_layer(&self, store: RedisSessionStore) -> Result<RidserSessionLayer> {
         debug!("📦 Preparing session");
         let session_layer = SessionLayer::new(store, self.secret.as_bytes())
-            .with_cookie_name(self.cookie_name)
+            .with_cookie_name(self.cookie_name.clone())
             .with_persistence_policy(PersistencePolicy::ChangedOnly)
             .with_secure(true)
-            .with_cookie_path(self.cookie_path)
+            .with_cookie_path(self.cookie_path.clone())
             .with_same_site_policy(SameSite::None)
             .with_session_ttl(self.ttl);
 

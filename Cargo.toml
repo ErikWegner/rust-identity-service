@@ -8,10 +8,13 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.70"
 axum = "0.6.12"
+axum-extra = { version = "0.7.2", features = ["cookie"] }
 axum-macros = "0.3.7"
 axum-sessions = "0.5.0"
 async-redis-session = { version = "0.2.3", git = "https://github.com/ErikWegner/async-redis-session/" }
 dotenvy = "0.15.7"
+hyper = { version = "0.14", features = ["full"] }
+hyper-rustls = "0.24"
 openidconnect = "2.5.1"
 redis = "0.22.3"
 serde = { version = "1.0", features = ["derive"] }

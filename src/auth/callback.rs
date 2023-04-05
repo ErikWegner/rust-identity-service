@@ -12,7 +12,7 @@ use tracing::info;
 
 use crate::{
     auth::{LoginCallbackSessionParameters, OIDCClient},
-    session::purge_store_and_regenerate_session,
+    session::{purge_store_and_regenerate_session, SESSION_KEY_JWT},
 };
 
 #[derive(Debug, Deserialize)]
@@ -59,7 +59,7 @@ pub(crate) async fn callback(
 
     purge_store_and_regenerate_session(&mut session, client).await;
 
-    let _ = session.insert("ridser_jwt", jwt);
+    let _ = session.insert(SESSION_KEY_JWT, jwt);
 
     Ok(Redirect::to(&login_callback_session_params.app_uri).into_response())
 }
