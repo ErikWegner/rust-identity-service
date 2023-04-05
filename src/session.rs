@@ -40,6 +40,9 @@ pub(crate) fn redis_cons(connection_url: &str) -> Result<(RedisSessionStore, Cli
         .with_context(|| format!("Failed to connect to redis at {connection_url}"))?;
     let client = Client::open(connection_url)
         .with_context(|| format!("Failed to connect to redis at {connection_url}"))?;
+    let _ = client
+        .get_connection_with_timeout(Duration::from_secs(1))
+        .with_context(|| format!("Redis configured to use {connection_url}"))?;
     Ok((store, client))
 }
 
