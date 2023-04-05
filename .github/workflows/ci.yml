@@ -2,6 +2,9 @@ on: [push, pull_request]
 
 name: Continuous integration
 
+env:
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+
 jobs:
   check:
     name: Check
@@ -20,6 +23,7 @@ jobs:
   test:
     name: Test Suite
     runs-on: ubuntu-latest
+    container: rust:1.68.2
     services:
       # Label used to access the service container
       redis:
