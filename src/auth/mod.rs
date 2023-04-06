@@ -1,6 +1,7 @@
 mod callback;
 mod login;
 mod oidcclient;
+mod status;
 
 pub use oidcclient::OIDCClient;
 
@@ -15,7 +16,7 @@ use tower::ServiceBuilder;
 
 use crate::session::RidserSessionLayer;
 
-use self::{callback::callback, login::login};
+use self::{callback::callback, login::login, status::status};
 
 #[derive(Debug, Clone)]
 pub(crate) struct AuthorizeData {
@@ -98,6 +99,7 @@ pub(crate) fn auth_routes(
                     .layer(Extension(client.clone())),
             ),
         )
+        .route("/status", get(status))
         .layer(session_layer.clone())
 }
 
