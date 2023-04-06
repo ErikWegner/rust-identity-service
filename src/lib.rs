@@ -14,6 +14,7 @@ use crate::{
 
 mod auth;
 mod http;
+mod monitoring;
 mod session;
 
 async fn shutdown_signal() {
@@ -73,7 +74,7 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
         env::var("RIDSER_PROXY_TARGET").context("missing RIDSER_PROXY_TARGET")?,
         &session_setup.cookie_name,
     )?;
-    let app = app(oidc_client, &session_layer, &proxy_config, client);
+    let app = app(oidc_client, &session_layer, &proxy_config, &client);
 
     tracing::info!("💈 Listening on http://{}", &bind_addr);
     axum::Server::bind(&bind_addr)

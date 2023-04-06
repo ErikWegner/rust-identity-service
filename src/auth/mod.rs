@@ -79,7 +79,7 @@ pub(crate) struct LoginCallbackSessionParameters {
 pub(crate) fn auth_routes(
     oidc_client: OIDCClient,
     session_layer: &RidserSessionLayer,
-    client: Client,
+    client: &Client,
 ) -> Router {
     Router::new()
         .route(
@@ -95,7 +95,7 @@ pub(crate) fn auth_routes(
             get(callback).layer(
                 ServiceBuilder::new()
                     .layer(Extension(oidc_client))
-                    .layer(Extension(client)),
+                    .layer(Extension(client.clone())),
             ),
         )
         .layer(session_layer.clone())
@@ -363,13 +363,10 @@ mod tests {
         }
 
         pub fn router(&self) -> Router {
+            let redis_client = self.redis_client.clone();
             Router::new().nest(
                 "/auth",
-                auth_routes(
-                    self.oidc_client.clone(),
-                    &self.session_layer,
-                    self.redis_client.clone(),
-                ),
+                auth_routes(self.oidc_client.clone(), &self.session_layer, &redis_client),
             )
         }
 

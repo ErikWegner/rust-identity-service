@@ -11,7 +11,7 @@ use axum::{
         HeaderValue, Method, Request, StatusCode, Uri,
     },
     response::{IntoResponse, Response},
-    routing::{delete, get},
+    routing::delete,
     Extension, Router,
 };
 use axum_extra::extract::CookieJar;
@@ -26,6 +26,7 @@ use tracing::{debug, error, warn};
 
 use crate::{
     auth::{auth_routes, OIDCClient, SessionTokens},
+    monitoring::health_routes,
     session::{RidserSessionLayer, SESSION_KEY_CSRF_TOKEN, SESSION_KEY_JWT},
 };
 
@@ -75,12 +76,6 @@ pub(crate) fn socket_addr() -> Result<SocketAddr> {
     let ip = IpAddr::from_str(interface_addr.as_str())
         .with_context(|| format!("Invalid address {}", interface_addr))?;
     Ok(SocketAddr::new(ip, port_parsed))
-}
-
-fn health_routes() -> Router {
-    Router::new()
-        .route("/up", get(|| async { "up" }))
-        .route("/health", get(|| async { "health" }))
 }
 
 fn walk_dir(path: &str) -> Result<Vec<String>> {
@@ -219,12 +214,12 @@ pub(crate) fn app(
     oidc_client: OIDCClient,
     session_layer: &RidserSessionLayer,
     proxy_config: &ProxyConfig,
-    client: Client,
+    client: &Client,
 ) -> Result<Router> {
     let spa_apps = walk_dir("files")?;
     let mut app = Router::new()
         .nest("/api", api_proxy(session_layer, proxy_config))
-        .nest("/app", health_routes())
+        .nest("/app", health_routes(client))
         .nest("/auth", auth_routes(oidc_client, session_layer, client));
 
     for spa_app in spa_apps {
