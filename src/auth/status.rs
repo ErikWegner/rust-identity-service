@@ -1,6 +1,6 @@
 use axum::Json;
-use serde::Serialize;
 use serde::Deserialize;
+use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct StatusResponse {
@@ -9,7 +9,7 @@ pub(crate) struct StatusResponse {
     pub(crate) authenticated: bool,
 }
 
-pub(crate) async fn status() -> Json<StatusResponse>{
+pub(crate) async fn status() -> Json<StatusResponse> {
     Json(StatusResponse {
         expires_in: None,
         refresh_expires_in: None,
@@ -19,11 +19,7 @@ pub(crate) async fn status() -> Json<StatusResponse>{
 
 #[cfg(test)]
 mod tests {
-    use axum::{
-        body::Body,
-        http::Request,
-        http::StatusCode,
-    };
+    use axum::{body::Body, http::Request, http::StatusCode};
     use tower::ServiceExt;
 
     use crate::auth::tests::MockSetup;
@@ -62,8 +58,8 @@ mod tests {
             "response should be ok, but {}",
             body
         );
-        let s: StatusResponse = serde_json::from_str(body.as_str()).expect("Body should deserialize");
+        let s: StatusResponse =
+            serde_json::from_str(body.as_str()).expect("Body should deserialize");
         assert!(!s.authenticated, "Should not be authenticated");
     }
 }
-
