@@ -34,7 +34,7 @@ pub struct OIDCClient {
 }
 
 fn jwt_exp(jwt: &str) -> Result<u64> {
-    let payload = jwt.split(".").skip(1).next().unwrap_or_default();
+    let payload = jwt.split('.').nth(1).unwrap_or_default();
     let payload = base64::decode(payload)?;
     let payload = String::from_utf8(payload)?;
     let jwtdecoded: ExpFieldInJWT = serde_json::from_str(payload.as_str())?;
@@ -162,14 +162,14 @@ impl OIDCClient {
             token_response
                 .expires_in()
                 .map(|exp| SystemTime::now() + exp)
-                .unwrap_or_else(|| SystemTime::now())
+                .unwrap_or_else(SystemTime::now)
         };
 
         let refresh_expires_at = token_response
             .refresh_token()
             .and_then(|rt| jwt_exp(rt.secret()).ok())
             .map(|exp| UNIX_EPOCH + Duration::from_secs(exp))
-            .unwrap_or_else(|| SystemTime::now());
+            .unwrap_or_else(SystemTime::now);
 
         Ok(SessionTokens::new(
             token_response.access_token(),
