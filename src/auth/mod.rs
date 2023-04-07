@@ -3,6 +3,8 @@ mod login;
 mod oidcclient;
 mod status;
 
+use std::time::SystemTime;
+
 pub use oidcclient::OIDCClient;
 
 use axum::{routing::get, Extension, Router};
@@ -47,6 +49,8 @@ pub(crate) struct SessionTokens {
     access_token: String,
     refresh_token: Option<String>,
     id_token: String,
+    expires_at: SystemTime,
+    refresh_expires_at: SystemTime,
 }
 
 impl SessionTokens {
@@ -54,11 +58,17 @@ impl SessionTokens {
         access_token: &AccessToken,
         refresh_token: Option<&RefreshToken>,
         id_token: &CoreIdToken,
+        expires_at: SystemTime,
+        refresh_expires_at: SystemTime,
     ) -> Self {
         Self {
             access_token: access_token.secret().to_string(),
             refresh_token: refresh_token.map(|r| r.secret().to_string()),
             id_token: id_token.to_string(),
+            expires_at,
+            refresh_expires_at,
+            // expires_at: now + Duration::from_secs(expires_in as u64),
+            // refresh_expires_at: now + Duration::from_secs(refresh_expires_in as u64),
         }
     }
 
@@ -105,10 +115,16 @@ pub(crate) fn auth_routes(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::SystemTime};
 
     use axum::{http::HeaderValue, Router};
-    use axum_sessions::async_session::chrono::{Duration, Utc};
+    use axum_sessions::async_session::{
+        base64,
+        chrono::Utc,
+        hmac::{Hmac, Mac, NewMac},
+        sha2::Sha256,
+        Session, SessionStore,
+    };
     use once_cell::sync::Lazy;
     use openidconnect::{
         core::{
@@ -117,9 +133,9 @@ mod tests {
             CoreRsaPrivateSigningKey, CoreSubjectIdentifierType, CoreTokenResponse, CoreTokenType,
         },
         AccessToken, Audience, AuthUrl, EmptyAdditionalClaims, EmptyAdditionalProviderMetadata,
-        EmptyExtraTokenFields, EndUserEmail, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl, Nonce,
-        PrivateSigningKey, ResponseTypes, Scope, StandardClaims, SubjectIdentifier, TokenUrl,
-        UserInfoUrl,
+        EmptyExtraTokenFields, EndUserEmail, IdToken, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl,
+        Nonce, PrivateSigningKey, RefreshToken, ResponseTypes, Scope, StandardClaims,
+        SubjectIdentifier, TokenUrl, UserInfoUrl,
     };
     use rand::{distributions::Alphanumeric, Rng};
     use tracing_subscriber::filter::EnvFilter;
@@ -128,9 +144,9 @@ mod tests {
         Mock, MockServer, ResponseTemplate,
     };
 
-    use crate::session::{redis_cons, SessionSetup};
+    use crate::session::{redis_cons, SessionSetup, SESSION_KEY_JWT};
 
-    use super::{auth_routes, OIDCClient};
+    use super::{auth_routes, OIDCClient, SessionTokens};
 
     static GLOBAL_LOGGER_SETUP: Lazy<Arc<bool>> = Lazy::new(|| {
         tracing_subscriber::fmt()
@@ -224,17 +240,21 @@ mod tests {
         serde_json::to_string(&jwks).expect("Serialize JSON Web Key Set")
     }
 
-    fn oidc_token(issuer: &str, client_id: &str, nonce: &str) -> String {
-        let opaque_access_token = rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(32)
-            .map(char::from)
-            .collect::<String>();
-        let access_token = AccessToken::new(opaque_access_token);
-
+    fn id_token(
+        issuer: &str,
+        client_id: &str,
+        nonce: &str,
+        access_token: &AccessToken,
+    ) -> IdToken<
+        EmptyAdditionalClaims,
+        openidconnect::core::CoreGenderClaim,
+        openidconnect::core::CoreJweContentEncryptionAlgorithm,
+        CoreJwsSigningAlgorithm,
+        openidconnect::core::CoreJsonWebKeyType,
+    > {
         let rsa_pem = include_bytes!("../../test.pem");
         let rsa_pem: String = String::from_utf8(rsa_pem.to_vec()).expect("Read test.pem");
-        let id_token = CoreIdToken::new(
+        CoreIdToken::new(
             CoreIdTokenClaims::new(
                 // Specify the issuer URL for the OpenID Connect Provider.
                 IssuerUrl::new(issuer.to_string()).expect("Invalid issuer URL"),
@@ -243,7 +263,7 @@ mod tests {
                 vec![Audience::new(client_id.to_string())],
                 // The ID token expiration is usually much shorter than that of the access or refresh
                 // tokens issued to clients.
-                Utc::now() + Duration::seconds(300),
+                Utc::now() + chrono::Duration::seconds(300),
                 // The issue time is usually the current time.
                 Utc::now(),
                 // Set the standard claims defined by the OpenID Connect Core spec.
@@ -280,13 +300,24 @@ mod tests {
             // When returning the ID token alongside an access token (e.g., in the Authorization Code
             // flow), it is recommended to pass the access token here to set the `at_hash` claim
             // automatically.
-            Some(&access_token),
+            Some(access_token),
             // When returning the ID token alongside an authorization code (e.g., in the implicit
             // flow), it is recommended to pass the authorization code here to set the `c_hash` claim
             // automatically.
             None,
         )
-        .expect("Invalid ID token");
+        .expect("Invalid ID token")
+    }
+
+    fn oidc_token(issuer: &str, client_id: &str, nonce: &str) -> String {
+        let opaque_access_token = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(32)
+            .map(char::from)
+            .collect::<String>();
+        let access_token = AccessToken::new(opaque_access_token);
+
+        let id_token = id_token(issuer, client_id, nonce, &access_token);
 
         let token_response = CoreTokenResponse::new(
             access_token,
@@ -303,6 +334,8 @@ mod tests {
         mock_server: MockServer,
         issuer_url: String,
         client_id: String,
+        session_store: async_redis_session::RedisSessionStore,
+        session_secret: String,
     }
 
     impl MockSetup {
@@ -345,13 +378,13 @@ mod tests {
             let (session_store, redis_client) =
                 redis_cons("redis://redis/").expect("Redis setup failed");
             let session_setup = SessionSetup {
-                secret: session_secret,
+                secret: session_secret.clone(),
                 cookie_name: "testing.sid".to_string(),
                 cookie_path: "/".to_string(),
                 ttl: Some(std::time::Duration::from_secs(300)),
             };
             let session_layer = session_setup
-                .get_session_layer(session_store)
+                .get_session_layer(session_store.clone())
                 .expect("Session setup failed");
 
             Self {
@@ -361,6 +394,8 @@ mod tests {
                 redis_client,
                 oidc_client,
                 session_layer,
+                session_secret,
+                session_store,
             }
         }
 
@@ -391,6 +426,43 @@ mod tests {
                 ))
                 .mount(&self.mock_server)
                 .await;
+        }
+
+        pub async fn setup_authenticated_state(&self) -> String {
+            // Generate a session cookie
+            let mut session = Session::new();
+            // Generate JWT
+            let access_token = AccessToken::new("some-opaque-access-token".to_string());
+            let refresh_token = RefreshToken::new("some-opaque-refresh-token".to_string());
+            let refresh_token = Some(&refresh_token);
+            let id_token = id_token(self.issuer_url.as_str(), "unittest", "nonce", &access_token);
+            let jwt = SessionTokens::new(
+                &access_token,
+                refresh_token,
+                &id_token,
+                SystemTime::now() + std::time::Duration::from_secs(15),
+                SystemTime::now() + std::time::Duration::from_secs(500),
+            );
+            // Store data for session
+            session
+                .insert(SESSION_KEY_JWT, jwt)
+                .expect("Storing authenticated state failed");
+            // Set session cookie name on self
+            let cookie_value = self
+                .session_store
+                .store_session(session)
+                .await
+                .expect("Storing session failed")
+                .expect("Session has id");
+
+            let mut mac = Hmac::<Sha256>::new_from_slice(&self.session_secret.as_bytes()[..32])
+                .expect("good key");
+            mac.update(cookie_value.as_bytes());
+
+            // Cookie's new value is [MAC | original-value].
+            let mut new_value = base64::encode(mac.finalize().into_bytes());
+            new_value.push_str(cookie_value.as_str());
+            new_value
         }
     }
 }

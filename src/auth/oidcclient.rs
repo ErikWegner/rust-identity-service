@@ -1,6 +1,10 @@
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{anyhow, Context, Result};
+use axum_sessions::async_session::base64;
 use openidconnect::{
     core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
     reqwest::async_http_client,
@@ -8,19 +12,33 @@ use openidconnect::{
     Nonce, OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope,
     TokenResponse,
 };
+use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
 use super::{callback::TokenExchangeData, AuthorizeData, SessionTokens};
 
-#[derive(Debug, Clone)]
-pub struct OIDCClient {
-    client: CoreClient,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExpFieldInJWT {
+    pub(crate) exp: u64,
 }
 
 pub(crate) struct AuthorizeRequestData {
     pub(crate) redirect_uri: String,
     pub(crate) state: String,
     pub(crate) scope: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct OIDCClient {
+    client: CoreClient,
+}
+
+fn jwt_exp(jwt: &str) -> Result<u64> {
+    let payload = jwt.split(".").skip(1).next().unwrap_or_default();
+    let payload = base64::decode(payload)?;
+    let payload = String::from_utf8(payload)?;
+    let jwtdecoded: ExpFieldInJWT = serde_json::from_str(payload.as_str())?;
+    Ok(jwtdecoded.exp)
 }
 
 impl OIDCClient {
@@ -138,10 +156,27 @@ impl OIDCClient {
 
         debug!("Login successful {:?}", claims);
 
+        let expires_at = if let Ok(exp) = jwt_exp(token_response.access_token().secret()) {
+            UNIX_EPOCH + Duration::from_secs(exp)
+        } else {
+            token_response
+                .expires_in()
+                .map(|exp| SystemTime::now() + exp)
+                .unwrap_or_else(|| SystemTime::now())
+        };
+
+        let refresh_expires_at = token_response
+            .refresh_token()
+            .and_then(|rt| jwt_exp(rt.secret()).ok())
+            .map(|exp| UNIX_EPOCH + Duration::from_secs(exp))
+            .unwrap_or_else(|| SystemTime::now());
+
         Ok(SessionTokens::new(
             token_response.access_token(),
             token_response.refresh_token(),
             id_token,
+            expires_at,
+            refresh_expires_at,
         ))
     }
 }

@@ -1,0 +1,14 @@
+# docker compose -f .devcontainer/docker-compose.yml -f docker-compose.override.yml
+services:
+  ridser:
+    image: rust-nvim:local
+    build:
+      context: .
+      dockerfile: ../nvim.Dockerfile
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:1123:1123"
+    volumes:
+      - $HOME/.config/nvim:/home/coder/.config/nvim
+      - $HOME/.config/TabNine:/home/coder/.config/TabNine
+      - $HOME/.local/share/nvim:/home/coder/.local/share/nvim

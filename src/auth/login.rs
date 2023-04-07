@@ -7,6 +7,7 @@ use axum::{
 };
 use axum_macros::debug_handler;
 use axum_sessions::extractors::WritableSession;
+use rand::{distributions::Alphanumeric, Rng};
 use redis::Client;
 use serde::Deserialize;
 use tracing::{debug, error};
@@ -26,8 +27,6 @@ pub(crate) struct LoginQueryParams {
     redirect_uri: String,
     #[serde(rename = "scope")]
     scope: String,
-    #[serde(rename = "state")]
-    state: String,
 }
 
 #[debug_handler]
@@ -38,11 +37,16 @@ pub(crate) async fn login(
     login_query_params: Query<LoginQueryParams>,
 ) -> Result<Response, Response> {
     purge_store_and_regenerate_session(&mut session, client).await;
+    let state: String = rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(20)
+        .map(char::from)
+        .collect();
     let d = oidc_client
         .authorize_data(AuthorizeRequestData {
             redirect_uri: login_query_params.redirect_uri.clone(),
-            state: login_query_params.state.clone(),
             scope: login_query_params.scope.clone(),
+            state,
         })
         .await
         .map_err(|e| {

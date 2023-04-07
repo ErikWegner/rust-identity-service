@@ -66,6 +66,8 @@ pub(crate) async fn callback(
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use axum::{
         body::Body,
         http::{
@@ -73,6 +75,7 @@ mod tests {
             Request,
         },
     };
+    use hyper::Uri;
     use rand::{distributions::Alphanumeric, Rng};
     use tower::{Service, ServiceExt};
 
@@ -90,17 +93,24 @@ mod tests {
             .take(20)
             .map(char::from)
             .collect();
-        let state: String = rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(16)
-            .map(char::from)
-            .collect();
 
         // Act
-        let request = Request::builder().uri(format!("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid&state={state}")).body(Body::empty()).unwrap();
+        let request = Request::builder().uri(format!("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid")).body(Body::empty()).unwrap();
         let response1 = app.ready().await.unwrap().call(request).await.unwrap();
         let cookie1 = response1.headers().get(SET_COOKIE).unwrap();
         let redirect_uri1 = response1.headers().get(LOCATION).unwrap();
+        let uri = Uri::from_str(redirect_uri1.to_str().unwrap()).unwrap();
+        let state: String = uri
+            .query()
+            .unwrap_or_default()
+            .split("&")
+            .find(|s| s.starts_with("state="))
+            .expect("Redirect uri should have state")
+            .split('=')
+            .skip(1)
+            .take(1)
+            .collect();
+
         m.setup_id_token_nonce(redirect_uri1).await;
 
         let request = Request::builder()
