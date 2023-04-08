@@ -74,12 +74,11 @@ pub(crate) async fn refresh(
 
     let refresh_token = session_tokens
         .refresh_token()
-        .map(|s| s.to_string())
         .ok_or_else(|| {
             debug!("No refresh token in session");
             (StatusCode::BAD_REQUEST, "Refresh token missing").into_response()
         })?
-        .clone();
+        ;
 
     let response = tokio::spawn(async move {
         refresh_lock.set_user_is_refreshing(&userid);
@@ -116,14 +115,14 @@ mod tests {
 
     use crate::auth::tests::MockSetup;
 
-    use super::*;
-
     #[tokio::test]
     async fn test_refresh() {
         // Arrange
         let m = MockSetup::new().await;
         let app = m.router();
         let session_cookie = m.setup_authenticated_state().await;
+        let session_cookie = format!("{}={}", "testing.sid", session_cookie);
+        m.setup_refresh_token_response("refresh nonce").await;
 
         // Act
         let response = app

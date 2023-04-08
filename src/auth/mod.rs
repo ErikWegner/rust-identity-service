@@ -86,11 +86,7 @@ impl SessionTokens {
     }
 
     pub(crate) fn refresh_token(&self) -> Option<String> {
-        if let Some(ref refresh_token) = self.refresh_token {
-            Some(refresh_token.clone())
-        } else {
-            None
-        }
+        self.refresh_token.as_ref().cloned()
     }
 
     pub(crate) fn ttl_gt(&self, threshold: u64) -> bool {
@@ -439,7 +435,7 @@ mod tests {
                     self.oidc_client.clone(),
                     &self.session_layer,
                     &redis_client,
-                    3,
+                    20,
                 ),
             )
         }
@@ -459,6 +455,17 @@ mod tests {
                 .and(path("/testing-issuer/token"))
                 .respond_with(ResponseTemplate::new(200).set_body_raw(
                     oidc_token(&self.issuer_url, &self.client_id, &nonce),
+                    "application/json",
+                ))
+                .mount(&self.mock_server)
+                .await;
+        }
+
+        pub async fn setup_refresh_token_response(&self, nonce: &str) {
+            Mock::given(method("POST"))
+                .and(path("/testing-issuer/token"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    oidc_token(&self.issuer_url, &self.client_id, nonce),
                     "application/json",
                 ))
                 .mount(&self.mock_server)

@@ -95,7 +95,7 @@ mod tests {
             .collect();
 
         // Act
-        let request = Request::builder().uri(format!("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid")).body(Body::empty()).unwrap();
+        let request = Request::builder().uri("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid".to_string()).body(Body::empty()).unwrap();
         let response1 = app.ready().await.unwrap().call(request).await.unwrap();
         let cookie1 = response1.headers().get(SET_COOKIE).unwrap();
         let redirect_uri1 = response1.headers().get(LOCATION).unwrap();
@@ -103,7 +103,7 @@ mod tests {
         let state: String = uri
             .query()
             .unwrap_or_default()
-            .split("&")
+            .split('&')
             .find(|s| s.starts_with("state="))
             .expect("Redirect uri should have state")
             .split('=')
