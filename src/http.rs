@@ -215,12 +215,16 @@ pub(crate) fn app(
     session_layer: &RidserSessionLayer,
     proxy_config: &ProxyConfig,
     client: &Client,
+    remaining_secs_threshold: u64,
 ) -> Result<Router> {
     let spa_apps = walk_dir("files")?;
     let mut app = Router::new()
         .nest("/api", api_proxy(session_layer, proxy_config))
         .nest("/app", health_routes(client))
-        .nest("/auth", auth_routes(oidc_client, session_layer, client));
+        .nest(
+            "/auth",
+            auth_routes(oidc_client, session_layer, client, remaining_secs_threshold),
+        );
 
     for spa_app in spa_apps {
         let uri_path = if spa_app.is_empty() {

@@ -10,6 +10,7 @@ pub(crate) type RidserSessionLayer = SessionLayer<RedisSessionStore>;
 
 pub(crate) static SESSION_KEY_CSRF_TOKEN: &str = "ridser_csrf_token";
 pub(crate) static SESSION_KEY_JWT: &str = "ridser_jwt";
+pub(crate) static SESSION_KEY_USERID: &str = "ridser_userid";
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionSetup {

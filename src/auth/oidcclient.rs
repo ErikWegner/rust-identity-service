@@ -5,17 +5,34 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use axum_sessions::async_session::base64;
+use oauth2::basic::BasicTokenType;
 use openidconnect::{
-    core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
+    core::{
+        CoreAuthenticationFlow, CoreClient, CoreGenderClaim, CoreJsonWebKeyType,
+        CoreJweContentEncryptionAlgorithm, CoreJwsSigningAlgorithm, CoreProviderMetadata,
+    },
     reqwest::async_http_client,
-    AccessTokenHash, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl,
-    Nonce, OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope,
-    TokenResponse,
+    AccessTokenHash, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
+    EmptyAdditionalClaims, EmptyExtraTokenFields, IdTokenFields, IssuerUrl, Nonce,
+    OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope,
+    StandardTokenResponse, TokenResponse,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
 use super::{callback::TokenExchangeData, AuthorizeData, SessionTokens};
+
+type KeycloakTokenResponse = StandardTokenResponse<
+    IdTokenFields<
+        EmptyAdditionalClaims,
+        EmptyExtraTokenFields,
+        CoreGenderClaim,
+        CoreJweContentEncryptionAlgorithm,
+        CoreJwsSigningAlgorithm,
+        CoreJsonWebKeyType,
+    >,
+    BasicTokenType,
+>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ExpFieldInJWT {
@@ -39,6 +56,37 @@ fn jwt_exp(jwt: &str) -> Result<u64> {
     let payload = String::from_utf8(payload)?;
     let jwtdecoded: ExpFieldInJWT = serde_json::from_str(payload.as_str())?;
     Ok(jwtdecoded.exp)
+}
+
+fn token_response_to_session_tokens(
+    token_response: &KeycloakTokenResponse,
+) -> Result<SessionTokens> {
+    let id_token = token_response
+        .id_token()
+        .ok_or_else(|| anyhow!("Server did not return an ID token"))?;
+
+    let expires_at = if let Ok(exp) = jwt_exp(token_response.access_token().secret()) {
+        UNIX_EPOCH + Duration::from_secs(exp)
+    } else {
+        token_response
+            .expires_in()
+            .map(|exp| SystemTime::now() + exp)
+            .unwrap_or_else(SystemTime::now)
+    };
+
+    let refresh_expires_at = token_response
+        .refresh_token()
+        .and_then(|rt| jwt_exp(rt.secret()).ok())
+        .map(|exp| UNIX_EPOCH + Duration::from_secs(exp))
+        .unwrap_or_else(SystemTime::now);
+
+    Ok(SessionTokens::new(
+        token_response.access_token(),
+        token_response.refresh_token(),
+        id_token,
+        expires_at,
+        refresh_expires_at,
+    ))
 }
 
 impl OIDCClient {
@@ -156,27 +204,32 @@ impl OIDCClient {
 
         debug!("Login successful {:?}", claims);
 
-        let expires_at = if let Ok(exp) = jwt_exp(token_response.access_token().secret()) {
-            UNIX_EPOCH + Duration::from_secs(exp)
-        } else {
-            token_response
-                .expires_in()
-                .map(|exp| SystemTime::now() + exp)
-                .unwrap_or_else(SystemTime::now)
-        };
+        token_response_to_session_tokens(&token_response)
+    }
 
-        let refresh_expires_at = token_response
-            .refresh_token()
-            .and_then(|rt| jwt_exp(rt.secret()).ok())
-            .map(|exp| UNIX_EPOCH + Duration::from_secs(exp))
-            .unwrap_or_else(SystemTime::now);
+    pub(crate) async fn refresh_token(&self, refresh_token: &str) -> Result<SessionTokens> {
+        self.client
+            .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
+            .request_async(async_http_client)
+            .await
+            .map_err(|tokenerror| {
+                match tokenerror {
+                    openidconnect::RequestTokenError::ServerResponse(response) => {
+                        debug!("Server response: {:?}", response);
+                    }
+                    openidconnect::RequestTokenError::Request(err) => {
+                        debug!("Request error: {:?}", err)
+                    }
+                    openidconnect::RequestTokenError::Parse(serde_error, _) => {
+                        debug!("Parse error: {:?}", serde_error)
+                    }
+                    openidconnect::RequestTokenError::Other(err) => {
+                        debug!("Other error: {:?}", err)
+                    }
+                };
 
-        Ok(SessionTokens::new(
-            token_response.access_token(),
-            token_response.refresh_token(),
-            id_token,
-            expires_at,
-            refresh_expires_at,
-        ))
+                anyhow!("Token exchange failed")
+            })
+            .and_then(|tr| token_response_to_session_tokens(&tr))
     }
 }

@@ -1,13 +1,17 @@
 mod callback;
 mod login;
 mod oidcclient;
+mod refresh;
 mod status;
 
 use std::time::SystemTime;
 
 pub use oidcclient::OIDCClient;
 
-use axum::{routing::get, Extension, Router};
+use axum::{
+    routing::{get, post},
+    Extension, Router,
+};
 
 use openidconnect::{
     core::CoreIdToken, url::Url, AccessToken, CsrfToken, Nonce, PkceCodeVerifier, RefreshToken,
@@ -18,7 +22,12 @@ use tower::ServiceBuilder;
 
 use crate::session::RidserSessionLayer;
 
-use self::{callback::callback, login::login, status::status};
+use self::{
+    callback::callback,
+    login::login,
+    refresh::{refresh, RefreshLockManager},
+    status::status,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct AuthorizeData {
@@ -75,6 +84,19 @@ impl SessionTokens {
     pub(crate) fn access_token(&self) -> &str {
         &self.access_token
     }
+
+    pub(crate) fn refresh_token(&self) -> Option<String> {
+        if let Some(ref refresh_token) = self.refresh_token {
+            Some(refresh_token.clone())
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn ttl_gt(&self, threshold: u64) -> bool {
+        let now = SystemTime::now();
+        self.expires_at.duration_since(now).unwrap().as_secs() > threshold
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,7 +113,9 @@ pub(crate) fn auth_routes(
     oidc_client: OIDCClient,
     session_layer: &RidserSessionLayer,
     client: &Client,
+    remaining_secs_threshold: u64,
 ) -> Router {
+    let rlm = RefreshLockManager::new(remaining_secs_threshold);
     Router::new()
         .route(
             "/login",
@@ -105,8 +129,16 @@ pub(crate) fn auth_routes(
             "/callback",
             get(callback).layer(
                 ServiceBuilder::new()
-                    .layer(Extension(oidc_client))
+                    .layer(Extension(oidc_client.clone()))
                     .layer(Extension(client.clone())),
+            ),
+        )
+        .route(
+            "/refresh",
+            post(refresh).layer(
+                ServiceBuilder::new()
+                    .layer(Extension(rlm))
+                    .layer(Extension(oidc_client)),
             ),
         )
         .route("/status", get(status))
@@ -144,7 +176,7 @@ mod tests {
         Mock, MockServer, ResponseTemplate,
     };
 
-    use crate::session::{redis_cons, SessionSetup, SESSION_KEY_JWT};
+    use crate::session::{redis_cons, SessionSetup, SESSION_KEY_JWT, SESSION_KEY_USERID};
 
     use super::{auth_routes, OIDCClient, SessionTokens};
 
@@ -403,7 +435,12 @@ mod tests {
             let redis_client = self.redis_client.clone();
             Router::new().nest(
                 "/auth",
-                auth_routes(self.oidc_client.clone(), &self.session_layer, &redis_client),
+                auth_routes(
+                    self.oidc_client.clone(),
+                    &self.session_layer,
+                    &redis_client,
+                    3,
+                ),
             )
         }
 
@@ -447,6 +484,9 @@ mod tests {
             session
                 .insert(SESSION_KEY_JWT, jwt)
                 .expect("Storing authenticated state failed");
+            session
+                .insert(SESSION_KEY_USERID, "testbot")
+                .expect("Storing user id failed");
             // Set session cookie name on self
             let cookie_value = self
                 .session_store

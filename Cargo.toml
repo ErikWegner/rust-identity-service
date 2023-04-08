@@ -31,6 +31,7 @@ tower-http = { version = "0.4.0", features = ["fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tower = "0.4.13"
+oauth2 = "4.3.0"
 
 [dev-dependencies]
 hyper = "0.14.25"
