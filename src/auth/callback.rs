@@ -12,7 +12,7 @@ use tracing::info;
 
 use crate::{
     auth::{LoginCallbackSessionParameters, OIDCClient},
-    session::{purge_store_and_regenerate_session, SESSION_KEY_JWT},
+    session::{purge_store_and_regenerate_session, SESSION_KEY_JWT, SESSION_KEY_USERID},
 };
 
 #[derive(Debug, Deserialize)]
@@ -44,7 +44,7 @@ pub(crate) async fn callback(
         return Err((StatusCode::BAD_REQUEST, "Invalid request").into_response());
     }
 
-    let jwt = oidc_client
+    let (jwt, userid) = oidc_client
         .exchange_code(TokenExchangeData {
             code: callback_query_params.code.clone(),
             nonce: login_callback_session_params.nonce,
@@ -60,6 +60,7 @@ pub(crate) async fn callback(
     purge_store_and_regenerate_session(&mut session, client).await;
 
     let _ = session.insert(SESSION_KEY_JWT, jwt);
+    let _ = session.insert(SESSION_KEY_USERID, userid);
 
     Ok(Redirect::to(&login_callback_session_params.app_uri).into_response())
 }

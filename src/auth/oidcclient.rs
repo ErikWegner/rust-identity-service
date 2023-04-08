@@ -159,7 +159,10 @@ impl OIDCClient {
         ))
     }
 
-    pub(crate) async fn exchange_code(&self, data: TokenExchangeData) -> Result<SessionTokens> {
+    pub(crate) async fn exchange_code(
+        &self,
+        data: TokenExchangeData,
+    ) -> Result<(SessionTokens, String)> {
         let token_response = self
             .client
             .exchange_code(AuthorizationCode::new(data.code))
@@ -205,6 +208,7 @@ impl OIDCClient {
         debug!("Login successful {:?}", claims);
 
         token_response_to_session_tokens(&token_response)
+            .map(|tr| (tr, claims.subject().to_string()))
     }
 
     pub(crate) async fn refresh_token(&self, refresh_token: &str) -> Result<SessionTokens> {
