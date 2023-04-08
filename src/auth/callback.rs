@@ -12,10 +12,13 @@ use tracing::info;
 
 use crate::{
     auth::{LoginCallbackSessionParameters, OIDCClient},
-    session::{purge_store_and_regenerate_session, SESSION_KEY_JWT, SESSION_KEY_USERID},
+    session::{
+        purge_store_and_regenerate_session, SESSION_KEY_CSRF_TOKEN, SESSION_KEY_JWT,
+        SESSION_KEY_USERID,
+    },
 };
 
-use super::SessionTokens;
+use super::{random_alphanumeric_string, SessionTokens};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CallbackQueryParams {
@@ -40,6 +43,7 @@ pub(super) async fn callback_post_token_exchange(
     purge_store_and_regenerate_session(session, client).await;
 
     let _ = session.insert(SESSION_KEY_JWT, jwt);
+    let _ = session.insert(SESSION_KEY_CSRF_TOKEN, random_alphanumeric_string(24));
     let _ = session.insert(SESSION_KEY_USERID, userid);
 }
 
@@ -89,7 +93,6 @@ mod tests {
         },
     };
     use hyper::Uri;
-    use rand::{distributions::Alphanumeric, Rng};
     use tower::{Service, ServiceExt};
 
     use crate::auth::tests::MockSetup;
@@ -101,11 +104,7 @@ mod tests {
         // Arrange
         let m = MockSetup::new().await;
         let mut app = m.router();
-        let code: String = rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(20)
-            .map(char::from)
-            .collect();
+        let code: String = random_alphanumeric_string(20);
 
         // Act
         let request = Request::builder().uri("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid".to_string()).body(Body::empty()).unwrap();

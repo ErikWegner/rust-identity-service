@@ -1,4 +1,5 @@
 mod callback;
+mod csrftoken;
 mod login;
 mod oidcclient;
 mod refresh;
@@ -24,6 +25,7 @@ use crate::session::RidserSessionLayer;
 
 use self::{
     callback::callback,
+    csrftoken::csrftoken,
     login::login,
     refresh::{refresh, RefreshLockManager},
     status::status,
@@ -137,8 +139,16 @@ pub(crate) fn auth_routes(
                     .layer(Extension(oidc_client)),
             ),
         )
+        .route("/csrftoken", get(csrftoken))
         .route("/status", get(status))
         .layer(session_layer.clone())
+}
+
+pub(crate) fn random_alphanumeric_string(length: usize) -> String {
+    rand::Rng::sample_iter(rand::thread_rng(), &rand::distributions::Alphanumeric)
+        .take(length)
+        .map(char::from)
+        .collect::<String>()
 }
 
 #[cfg(test)]
@@ -170,7 +180,6 @@ mod tests {
         Nonce, PrivateSigningKey, RefreshToken, ResponseTypes, Scope, StandardClaims,
         SubjectIdentifier, TokenUrl, UserInfoUrl,
     };
-    use rand::{distributions::Alphanumeric, Rng};
     use tracing_subscriber::filter::EnvFilter;
     use wiremock::{
         matchers::{method, path},
@@ -179,7 +188,10 @@ mod tests {
 
     use crate::session::{redis_cons, SessionSetup};
 
-    use super::{auth_routes, callback::callback_post_token_exchange, OIDCClient, SessionTokens};
+    use super::{
+        auth_routes, callback::callback_post_token_exchange, random_alphanumeric_string,
+        OIDCClient, SessionTokens,
+    };
 
     static GLOBAL_LOGGER_SETUP: Lazy<Arc<bool>> = Lazy::new(|| {
         tracing_subscriber::fmt()
@@ -343,11 +355,7 @@ mod tests {
     }
 
     fn oidc_token(issuer: &str, client_id: &str, nonce: &str) -> String {
-        let opaque_access_token = rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(32)
-            .map(char::from)
-            .collect::<String>();
+        let opaque_access_token = random_alphanumeric_string(32);
         let access_token = AccessToken::new(opaque_access_token);
 
         let id_token = id_token(issuer, client_id, nonce, &access_token);
@@ -361,14 +369,15 @@ mod tests {
     }
 
     pub struct MockSetup {
-        oidc_client: OIDCClient,
-        session_layer: axum_sessions::SessionLayer<async_redis_session::RedisSessionStore>,
-        redis_client: redis::Client,
-        mock_server: MockServer,
-        issuer_url: String,
         client_id: String,
-        session_store: async_redis_session::RedisSessionStore,
+        cookie_name: String,
+        issuer_url: String,
+        mock_server: MockServer,
+        oidc_client: OIDCClient,
+        redis_client: redis::Client,
+        session_layer: axum_sessions::SessionLayer<async_redis_session::RedisSessionStore>,
         session_secret: String,
+        session_store: async_redis_session::RedisSessionStore,
     }
 
     impl MockSetup {
@@ -376,12 +385,9 @@ mod tests {
             let _b = GLOBAL_LOGGER_SETUP.clone();
             let mock_server = MockServer::start().await;
             let issuer_url = format!("{}/testing-issuer", mock_server.uri());
+            let cookie_name = format!("{}.sid", random_alphanumeric_string(8));
             let client_id = "test-client".to_string();
-            let client_secret: String = rand::thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(20)
-                .map(char::from)
-                .collect();
+            let client_secret: String = random_alphanumeric_string(20);
             Mock::given(method("GET"))
                 .and(path("/testing-issuer/.well-known/openid-configuration"))
                 .respond_with(
@@ -403,16 +409,12 @@ mod tests {
                     .await
                     .expect("OIDCClient creation failed");
 
-            let session_secret: String = rand::thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(64)
-                .map(char::from)
-                .collect();
+            let session_secret: String = random_alphanumeric_string(64);
             let (session_store, redis_client) =
                 redis_cons("redis://redis/").expect("Redis setup failed");
             let session_setup = SessionSetup {
                 secret: session_secret.clone(),
-                cookie_name: "testing.sid".to_string(),
+                cookie_name: cookie_name.clone(),
                 cookie_path: "/".to_string(),
                 ttl: Some(std::time::Duration::from_secs(300)),
             };
@@ -421,6 +423,7 @@ mod tests {
                 .expect("Session setup failed");
 
             Self {
+                cookie_name,
                 client_id,
                 issuer_url,
                 mock_server,
@@ -524,7 +527,7 @@ mod tests {
             // Cookie's new value is [MAC | original-value].
             let mut new_value = base64::encode(mac.finalize().into_bytes());
             new_value.push_str(cookie_value.as_str());
-            new_value
+            format!("{}={new_value}", self.cookie_name)
         }
     }
 }

@@ -118,7 +118,6 @@ mod tests {
         let m = MockSetup::new().await;
         let app = m.router();
         let session_cookie = m.setup_authenticated_state().await;
-        let session_cookie = format!("{}={}", "testing.sid", session_cookie);
         m.setup_refresh_token_response("refresh nonce").await;
 
         // Act
