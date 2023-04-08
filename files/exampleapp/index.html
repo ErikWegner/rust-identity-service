@@ -12,6 +12,10 @@
         body {
             font-size: 200%;
         }
+
+        #echoresponse {
+            font-size: 50%;
+        }
     </style>
 </head>
 
@@ -26,15 +30,31 @@
         for more information.
     </p>
     <p>
-        Login-Status: <span id="loginStatus"></span>
+        Login-Status: <span id="loginStatus"></span><br />
+        CSRF-Token: <span id="csrftoken"></span><br />
     </p>
     <div>
         <h2>Actions</h2>
         <p>
             <button id="login" type="button">Login</button>
             <button id="logout" type="button">Logout</button>
+            <button id="refresh" type="button">Refresh</button>
+            <button id="requestcsrftoken" type="button">CSRF-Token</button>
+            <button id="echorequest" type="button">Echo request</button>
         </p>
     </div>
+    <p>
+        <div style="display: flex;">
+            <div>
+                Message: <br />
+                <textarea id="userinput" cols="40" rows="15"></textarea>
+            </div>
+            <div>
+                Response: <br />
+                <div id="echoresponse"></div>
+            </div>
+        </div>
+    </p>
     <script type="module" src="sample.js"></script>
 </body>
 

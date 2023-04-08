@@ -35,6 +35,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/auth/csrftoken")
+                    .method("POST")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -72,6 +73,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/auth/csrftoken")
+                    .method("POST")
                     .header(COOKIE, session_cookie)
                     .body(Body::empty())
                     .unwrap(),

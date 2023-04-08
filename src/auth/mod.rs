@@ -93,7 +93,11 @@ impl SessionTokens {
 
     pub(crate) fn ttl_gt(&self, threshold: u64) -> bool {
         let now = SystemTime::now();
-        self.expires_at.duration_since(now).unwrap().as_secs() > threshold
+        self.expires_at
+            .duration_since(now)
+            .map(|st| st.as_secs())
+            .unwrap_or_default()
+            > threshold
     }
 }
 
@@ -139,7 +143,7 @@ pub(crate) fn auth_routes(
                     .layer(Extension(oidc_client)),
             ),
         )
-        .route("/csrftoken", get(csrftoken))
+        .route("/csrftoken", post(csrftoken))
         .route("/status", get(status))
         .layer(session_layer.clone())
 }
