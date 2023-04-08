@@ -36,7 +36,7 @@ pub(crate) async fn login(
     mut session: WritableSession,
     login_query_params: Query<LoginQueryParams>,
 ) -> Result<Response, Response> {
-    purge_store_and_regenerate_session(&mut session, client).await;
+    purge_store_and_regenerate_session(&mut session, &client).await;
     let state: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(20)

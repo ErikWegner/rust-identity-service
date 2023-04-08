@@ -145,14 +145,19 @@ pub(crate) fn auth_routes(
 mod tests {
     use std::{sync::Arc, time::SystemTime};
 
-    use axum::{http::HeaderValue, Router};
-    use axum_sessions::async_session::{
-        base64,
-        chrono::Utc,
-        hmac::{Hmac, Mac, NewMac},
-        sha2::Sha256,
-        Session, SessionStore,
+    use axum::{extract::FromRequestParts, http::HeaderValue, Router};
+    use axum_sessions::{
+        async_session::{
+            base64,
+            chrono::Utc,
+            hmac::{Hmac, Mac, NewMac},
+            sha2::Sha256,
+            Session, SessionStore,
+        },
+        extractors::WritableSession,
+        SessionHandle,
     };
+    use hyper::Request;
     use once_cell::sync::Lazy;
     use openidconnect::{
         core::{
@@ -172,9 +177,9 @@ mod tests {
         Mock, MockServer, ResponseTemplate,
     };
 
-    use crate::session::{redis_cons, SessionSetup, SESSION_KEY_JWT, SESSION_KEY_USERID};
+    use crate::session::{redis_cons, SessionSetup};
 
-    use super::{auth_routes, OIDCClient, SessionTokens};
+    use super::{auth_routes, callback::callback_post_token_exchange, OIDCClient, SessionTokens};
 
     static GLOBAL_LOGGER_SETUP: Lazy<Arc<bool>> = Lazy::new(|| {
         tracing_subscriber::fmt()
@@ -474,7 +479,7 @@ mod tests {
 
         pub async fn setup_authenticated_state(&self) -> String {
             // Generate a session cookie
-            let mut session = Session::new();
+            let session = Session::new();
             // Generate JWT
             let access_token = AccessToken::new("some-opaque-access-token".to_string());
             let refresh_token = RefreshToken::new("some-opaque-refresh-token".to_string());
@@ -487,13 +492,23 @@ mod tests {
                 SystemTime::now() + std::time::Duration::from_secs(15),
                 SystemTime::now() + std::time::Duration::from_secs(500),
             );
-            // Store data for session
-            session
-                .insert(SESSION_KEY_JWT, jwt)
-                .expect("Storing authenticated state failed");
-            session
-                .insert(SESSION_KEY_USERID, "testbot")
-                .expect("Storing user id failed");
+            // Execute same code as the `callback` handler
+
+            let sh: SessionHandle = Arc::new(tokio::sync::RwLock::new(session.clone()));
+            let request = Request::builder()
+                .extension(sh)
+                .method("GET")
+                .uri("/")
+                .body(())
+                .unwrap();
+            let mut request_parts = request.into_parts().0;
+            let state = ();
+            let mut ws = WritableSession::from_request_parts(&mut request_parts, &state)
+                .await
+                .unwrap();
+            callback_post_token_exchange(&mut ws, &self.redis_client, jwt, "testbot".to_string())
+                .await;
+
             // Set session cookie name on self
             let cookie_value = self
                 .session_store

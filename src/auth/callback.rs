@@ -15,6 +15,8 @@ use crate::{
     session::{purge_store_and_regenerate_session, SESSION_KEY_JWT, SESSION_KEY_USERID},
 };
 
+use super::SessionTokens;
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct CallbackQueryParams {
     code: String,
@@ -28,6 +30,19 @@ pub(crate) struct TokenExchangeData {
     pub(crate) pkce_verifier: String,
     pub(crate) redirect_uri: String,
 }
+
+pub(super) async fn callback_post_token_exchange(
+    session: &mut WritableSession,
+    client: &Client,
+    jwt: SessionTokens,
+    userid: String,
+) {
+    purge_store_and_regenerate_session(session, client).await;
+
+    let _ = session.insert(SESSION_KEY_JWT, jwt);
+    let _ = session.insert(SESSION_KEY_USERID, userid);
+}
+
 #[debug_handler]
 pub(crate) async fn callback(
     Extension(oidc_client): Extension<OIDCClient>,
@@ -57,10 +72,7 @@ pub(crate) async fn callback(
             (StatusCode::UNAUTHORIZED, "Login failure").into_response()
         })?;
 
-    purge_store_and_regenerate_session(&mut session, client).await;
-
-    let _ = session.insert(SESSION_KEY_JWT, jwt);
-    let _ = session.insert(SESSION_KEY_USERID, userid);
+    callback_post_token_exchange(&mut session, &client, jwt, userid).await;
 
     Ok(Redirect::to(&login_callback_session_params.app_uri).into_response())
 }

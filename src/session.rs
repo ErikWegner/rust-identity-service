@@ -54,7 +54,7 @@ pub(crate) fn redis_cons(connection_url: &str) -> Result<(RedisSessionStore, Cli
 /// Create a new session
 pub(crate) async fn purge_store_and_regenerate_session(
     session: &mut WritableSession,
-    client: Client,
+    client: &Client,
 ) {
     if let Ok(mut connection) = client.get_async_connection().await {
         let key = session.id().to_string();
