@@ -72,13 +72,10 @@ pub(crate) async fn refresh(
         return Err((StatusCode::BAD_REQUEST, "Refresh too early".to_string()).into_response());
     }
 
-    let refresh_token = session_tokens
-        .refresh_token()
-        .ok_or_else(|| {
-            debug!("No refresh token in session");
-            (StatusCode::BAD_REQUEST, "Refresh token missing").into_response()
-        })?
-        ;
+    let refresh_token = session_tokens.refresh_token().ok_or_else(|| {
+        debug!("No refresh token in session");
+        (StatusCode::BAD_REQUEST, "Refresh token missing").into_response()
+    })?;
 
     let response = tokio::spawn(async move {
         refresh_lock.set_user_is_refreshing(&userid);
