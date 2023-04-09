@@ -1,15 +1,19 @@
 mod callback;
 mod csrftoken;
 mod login;
+mod logout;
 mod oidcclient;
 mod refresh;
 mod status;
 
 use std::time::SystemTime;
 
+pub use logout::LogoutAppSettings;
+pub use logout::LogoutBehavior;
 pub use oidcclient::OIDCClient;
 
 use axum::{
+    extract::FromRef,
     routing::{get, post},
     Extension, Router,
 };
@@ -23,10 +27,12 @@ use tower::ServiceBuilder;
 
 use crate::session::RidserSessionLayer;
 
+use self::logout::logout_callback;
 use self::{
     callback::callback,
     csrftoken::csrftoken,
     login::login,
+    logout::logout,
     refresh::{refresh, RefreshLockManager},
     status::status,
 };
@@ -111,11 +117,23 @@ pub(crate) struct LoginCallbackSessionParameters {
     scopes: String,
 }
 
+#[derive(Clone)]
+pub(crate) struct AppConfigurationState {
+    pub(crate) logout_app_settings: LogoutAppSettings,
+}
+
+impl FromRef<AppConfigurationState> for LogoutAppSettings {
+    fn from_ref(app_state: &AppConfigurationState) -> LogoutAppSettings {
+        app_state.logout_app_settings.clone()
+    }
+}
+
 pub(crate) fn auth_routes(
     oidc_client: OIDCClient,
     session_layer: &RidserSessionLayer,
     client: &Client,
     remaining_secs_threshold: u64,
+    app_config: AppConfigurationState,
 ) -> Router {
     let rlm = RefreshLockManager::new(remaining_secs_threshold);
     Router::new()
@@ -145,7 +163,10 @@ pub(crate) fn auth_routes(
         )
         .route("/csrftoken", post(csrftoken))
         .route("/status", get(status))
+        .route("/logout", get(logout))
+        .route("/logoutcallback", get(logout_callback))
         .layer(session_layer.clone())
+        .with_state(app_config)
 }
 
 pub(crate) fn random_alphanumeric_string(length: usize) -> String {
@@ -193,8 +214,10 @@ mod tests {
     use crate::session::{redis_cons, SessionSetup};
 
     use super::{
-        auth_routes, callback::callback_post_token_exchange, random_alphanumeric_string,
-        OIDCClient, SessionTokens,
+        auth_routes,
+        callback::callback_post_token_exchange,
+        logout::{LogoutAppSettings, LogoutBehavior},
+        random_alphanumeric_string, AppConfigurationState, OIDCClient, SessionTokens,
     };
 
     static GLOBAL_LOGGER_SETUP: Lazy<Arc<bool>> = Lazy::new(|| {
@@ -441,6 +464,12 @@ mod tests {
 
         pub fn router(&self) -> Router {
             let redis_client = self.redis_client.clone();
+            let app_config = AppConfigurationState {
+                logout_app_settings: LogoutAppSettings {
+                    logout_uri: format!("{}/logout", self.mock_server.uri()),
+                    _behavior: LogoutBehavior::FrontChannelLogoutWithIdToken,
+                },
+            };
             Router::new().nest(
                 "/auth",
                 auth_routes(
@@ -448,6 +477,7 @@ mod tests {
                     &self.session_layer,
                     &redis_client,
                     20,
+                    app_config,
                 ),
             )
         }

@@ -7,7 +7,7 @@ use tokio::signal;
 use tracing::debug;
 
 use crate::{
-    auth::OIDCClient,
+    auth::{AppConfigurationState, LogoutAppSettings, LogoutBehavior, OIDCClient},
     http::{app, ProxyConfig},
     session::redis_cons,
 };
@@ -78,12 +78,20 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
         .context("Missing RIDSER_SESSION_REFRESH_THRESHOLD")?
         .parse::<_>()
         .context("Cannot parse RIDSER_SESSION_REFRESH_THRESHOLD")?;
+    let app_config = AppConfigurationState {
+        logout_app_settings: LogoutAppSettings {
+            logout_uri: env::var("RIDSER_LOGOUT_SSO_URI")
+                .context("Missing RIDSER_LOGOUT_SSO_URI")?,
+            _behavior: LogoutBehavior::FrontChannelLogoutWithIdToken,
+        },
+    };
     let app = app(
         oidc_client,
         &session_layer,
         &proxy_config,
         &client,
         remaining_secs_threshold,
+        app_config,
     );
 
     tracing::info!("💈 Listening on http://{}", &bind_addr);

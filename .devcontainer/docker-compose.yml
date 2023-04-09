@@ -10,6 +10,8 @@ services:
       # Mount the root folder that contains .git
       - ..:/workspace:cached
     command: /bin/sh -c "while sleep 1000; do :; done"
+    environment:
+      - CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 
   redis:
     image: redis:6.2.6-alpine

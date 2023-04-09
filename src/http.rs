@@ -25,7 +25,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::{debug, error, warn};
 
 use crate::{
-    auth::{auth_routes, OIDCClient, SessionTokens},
+    auth::{auth_routes, AppConfigurationState, OIDCClient, SessionTokens},
     monitoring::health_routes,
     session::{RidserSessionLayer, SESSION_KEY_CSRF_TOKEN, SESSION_KEY_JWT},
 };
@@ -216,6 +216,7 @@ pub(crate) fn app(
     proxy_config: &ProxyConfig,
     client: &Client,
     remaining_secs_threshold: u64,
+    app_config: AppConfigurationState,
 ) -> Result<Router> {
     let spa_apps = walk_dir("files")?;
     let mut app = Router::new()
@@ -223,7 +224,13 @@ pub(crate) fn app(
         .nest("/app", health_routes(client))
         .nest(
             "/auth",
-            auth_routes(oidc_client, session_layer, client, remaining_secs_threshold),
+            auth_routes(
+                oidc_client,
+                session_layer,
+                client,
+                remaining_secs_threshold,
+                app_config,
+            ),
         );
 
     for spa_app in spa_apps {

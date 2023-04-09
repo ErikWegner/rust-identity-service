@@ -12,3 +12,5 @@ services:
       - $HOME/.config/nvim:/home/coder/.config/nvim
       - $HOME/.config/TabNine:/home/coder/.config/TabNine
       - $HOME/.local/share/nvim:/home/coder/.local/share/nvim
+      - $HOME/.local/state/nvim:/home/coder/.local/state/nvim
+
