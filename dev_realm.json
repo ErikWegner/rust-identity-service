@@ -675,7 +675,7 @@
       "access.token.lifespan" : "60",
       "saml.force.post.binding" : "false",
       "saml.multivalued.roles" : "false",
-      "post.logout.redirect.uris" : "+",
+      "post.logout.redirect.uris" : "http://localhost:3000/auth/logoutcallback",
       "oauth2.device.authorization.grant.enabled" : "false",
       "backchannel.logout.revoke.offline.tokens" : "false",
       "saml.server.signature.keyinfo.ext" : "false",

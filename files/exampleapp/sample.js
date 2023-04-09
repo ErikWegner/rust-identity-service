@@ -26,7 +26,16 @@ document.getElementById('login').onclick = () => {
 }
 
 document.getElementById('logout').onclick = () => {
-    window.location = '/auth/logout';
+    const oidCallbackUrl = window.location.origin + '/auth/logoutcallback';
+    const appCallbackUrl = window.location.origin + '/exampleapp/';
+
+    const params = Object.entries(
+        {
+            redirect_uri: oidCallbackUrl,
+            app_uri: appCallbackUrl,
+        }).map(([key, value]) => key + '=' + encodeURIComponent(value)).join("&");
+
+    window.location = '/auth/logout?' + params;
 };
 
 document.getElementById('refresh').onclick = () => {
