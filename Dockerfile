@@ -27,5 +27,7 @@ RUN ln -s /lib/libmimalloc.so.2.1 /lib/libmimalloc.so
 ENV LD_PRELOAD=/lib/libmimalloc.so
 ENV MIMALLOC_LARGE_OS_PAGES=1
 COPY --from=builder /usr/src/ridser/target/x86_64-unknown-linux-musl/release/ridser .
+EXPOSE 3000
+VOLUME ["/files"]
 USER 65534
 CMD ["./ridser"]
