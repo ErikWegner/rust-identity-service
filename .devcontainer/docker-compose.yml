@@ -1,0 +1,35 @@
+version: '3'
+services:
+  ridser:
+    # https://mcr.microsoft.com/v2/vscode/devcontainers/rust/tags/list
+    image: mcr.microsoft.com/devcontainers/rust:0-1-bullseye
+    ports:
+      # Publish keycloak here, because network stack is shared
+      - "8101:8101"
+    volumes:
+      # Mount the root folder that contains .git
+      - ..:/workspace:cached
+    command: /bin/sh -c "while sleep 1000; do :; done"
+    environment:
+      - CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+
+  redis:
+    image: redis:6.2.6-alpine
+  
+  echo:
+    image: erikwegner/rsecho:release-1.0.0
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:21.0.2
+    command:
+      - start-dev
+      - --import-realm
+    # Use the network stack of another container, specified via its name
+    # https://docs.docker.com/engine/reference/run/#network-settings
+    network_mode: "service:ridser"
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+      - KC_HTTP_PORT=8101
+    volumes:
+      - ../dev_realm.json:/opt/keycloak/data/import/dev_realm.json

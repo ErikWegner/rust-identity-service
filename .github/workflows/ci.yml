@@ -2,10 +2,14 @@ on: [push, pull_request]
 
 name: Continuous integration
 
+env:
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
 jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
+    container: rust:1.68.2
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -20,6 +24,18 @@ jobs:
   test:
     name: Test Suite
     runs-on: ubuntu-latest
+    container: rust:1.68.2
+    services:
+      # Label used to access the service container
+      redis:
+        # Docker Hub image
+        image: redis
+        # Set health checks to wait until redis has started
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -34,6 +50,7 @@ jobs:
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
+    container: rust:1.68.2
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -50,6 +67,7 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    container: rust:1.68.2
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
