@@ -33,25 +33,55 @@ use crate::{
 pub(crate) static HEADER_KEY_CSRF_TOKEN: &str = "x-csrf-token";
 
 #[derive(Debug, Clone)]
+pub(crate) struct ExtraProxyRoute {
+    path: String,
+    target: String,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ProxyConfig {
     base_url: String,
     cookie_name: String,
+    extra_routes: Vec<ExtraProxyRoute>,
 }
 
 impl ProxyConfig {
-    fn base_url(&self) -> &str {
-        &self.base_url
+    fn base_url(&self, uri: &str) -> &str {
+        self.extra_routes
+            .iter()
+            .find_map(|x| {
+                if uri.starts_with(x.path.as_str()) {
+                    Some(x.target.as_str())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(&self.base_url)
     }
 
-    pub(crate) fn try_init(base_url: String, cookie_name: &str) -> Result<Self> {
+    pub(crate) fn try_init(
+        base_url: String,
+        cookie_name: &str,
+        extra_routes: Vec<String>,
+    ) -> Result<Self> {
         let uri = Uri::from_str(base_url.as_str())?;
         let host = uri.host();
         if host.is_none() {
             return Err(anyhow!("Missing host"));
         }
+        let extra_routes = extra_routes
+            .into_iter()
+            .filter_map(|s| {
+                s.split_once("=>").map(|(path, target)| ExtraProxyRoute {
+                    path: path.to_string(),
+                    target: target.to_string(),
+                })
+            })
+            .collect();
         Ok(Self {
             base_url,
             cookie_name: cookie_name.to_string(),
+            extra_routes,
         })
     }
 }
@@ -101,6 +131,9 @@ fn walk_dir(path: &str) -> Result<Vec<String>> {
 }
 
 fn api_proxy(session_layer: &RidserSessionLayer, proxy_config: &ProxyConfig) -> Router {
+    proxy_config.extra_routes.iter().for_each(|er| {
+        debug!("Adding extra route: {:?}", er);
+    });
     let proxy_client_https = hyper_rustls::HttpsConnectorBuilder::new()
         .with_native_roots()
         .https_or_http()
@@ -150,7 +183,9 @@ async fn proxy(
         .path_and_query()
         .map(|v| v.as_str())
         .unwrap_or_else(|| req.uri().path());
-    let uri = format!("{}{}", proxy_config.base_url(), path_query);
+
+    // TODO: match extra_routes?
+    let uri = format!("{}{}", proxy_config.base_url(path_query), path_query);
     debug!("Proxy {} request to new uri `{}`", req.method(), uri);
     let proxy_uri = Uri::try_from(uri.as_str()).map_err(|e| {
         debug!("Invalid proxy uri {:?}", e);

@@ -8,6 +8,7 @@ mod status;
 
 use std::time::SystemTime;
 
+pub use login::LoginAppSettings;
 pub use logout::LogoutAppSettings;
 pub use logout::LogoutBehavior;
 pub use oidcclient::OIDCClient;
@@ -119,7 +120,14 @@ pub(crate) struct LoginCallbackSessionParameters {
 
 #[derive(Clone)]
 pub(crate) struct AppConfigurationState {
+    pub(crate) login_app_settings: LoginAppSettings,
     pub(crate) logout_app_settings: LogoutAppSettings,
+}
+
+impl FromRef<AppConfigurationState> for LoginAppSettings {
+    fn from_ref(app_state: &AppConfigurationState) -> Self {
+        app_state.login_app_settings.clone()
+    }
 }
 
 impl FromRef<AppConfigurationState> for LogoutAppSettings {
@@ -217,7 +225,8 @@ mod tests {
         auth_routes,
         callback::callback_post_token_exchange,
         logout::{LogoutAppSettings, LogoutBehavior},
-        random_alphanumeric_string, AppConfigurationState, OIDCClient, SessionTokens,
+        random_alphanumeric_string, AppConfigurationState, LoginAppSettings, OIDCClient,
+        SessionTokens,
     };
 
     static GLOBAL_LOGGER_SETUP: Lazy<Arc<bool>> = Lazy::new(|| {
@@ -465,9 +474,17 @@ mod tests {
         pub fn router(&self) -> Router {
             let redis_client = self.redis_client.clone();
             let app_config = AppConfigurationState {
+                login_app_settings: LoginAppSettings::new(vec![
+                    "http://example.com".to_string(),
+                    "http://example.org/my/app/*".to_string(),
+                ]),
                 logout_app_settings: LogoutAppSettings {
                     logout_uri: format!("{}/logout", self.mock_server.uri()),
                     _behavior: LogoutBehavior::FrontChannelLogoutWithIdToken,
+                    allowed_app_uris_match: vec![
+                        "http://logout.example.com".to_string(),
+                        "http://example.org/it/index".to_string(),
+                    ],
                 },
             };
             Router::new().nest(

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use axum::{
-    extract::Query,
+    extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
     Extension,
@@ -9,7 +9,7 @@ use axum_macros::debug_handler;
 use axum_sessions::extractors::WritableSession;
 use redis::Client;
 use serde::Deserialize;
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 use crate::{
     auth::{
@@ -31,13 +31,56 @@ pub(crate) struct LoginQueryParams {
     scope: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct LoginAppSettings {
+    allowed_app_uris_match: Vec<String>,
+    allowed_app_uris_startswith: Vec<String>,
+}
+
+impl LoginAppSettings {
+    pub fn new(allowed_app_uris: Vec<String>) -> Self {
+        let mut allowed_app_uris_match: Vec<String> = Vec::new();
+        let mut allowed_app_uris_startswith: Vec<String> = Vec::new();
+        for allowed_app_uri in allowed_app_uris {
+            if allowed_app_uri.ends_with('*') {
+                let allowed_app_uri = allowed_app_uri[0..(allowed_app_uri.len() - 1)].to_string();
+                debug!("Allowed prefix for app_uri: {}", allowed_app_uri);
+                allowed_app_uris_startswith.push(allowed_app_uri);
+            } else {
+                debug!("Allowed app uri: {}", allowed_app_uri);
+                allowed_app_uris_match.push(allowed_app_uri.clone())
+            }
+        }
+        Self {
+            allowed_app_uris_match,
+            allowed_app_uris_startswith,
+        }
+    }
+
+    pub(crate) fn is_app_uri_allowed(&self, app_uri: &str) -> bool {
+        trace!("is_app_uri_allowed: app_uri: {}", app_uri);
+        let t = app_uri.to_string();
+        if self.allowed_app_uris_match.contains(&t) {
+            return true;
+        }
+        self.allowed_app_uris_startswith
+            .iter()
+            .any(|allowed_app_uri| t.starts_with(allowed_app_uri))
+    }
+}
+
 #[debug_handler]
 pub(crate) async fn login(
+    State(login_app_settings): State<LoginAppSettings>,
     Extension(oidc_client): Extension<OIDCClient>,
     Extension(client): Extension<Client>,
     mut session: WritableSession,
     login_query_params: Query<LoginQueryParams>,
 ) -> Result<Response, Response> {
+    if !login_app_settings.is_app_uri_allowed(login_query_params.app_uri.as_str()) {
+        debug!("app_uri {} is not allowed", login_query_params.app_uri);
+        return Err((StatusCode::BAD_REQUEST, "Invalid app_uri").into_response());
+    }
     purge_store_and_regenerate_session(&mut session, &client).await;
     let state: String = random_alphanumeric_string(20);
     let d = oidc_client
@@ -157,5 +200,99 @@ mod tests {
             cookie2.to_str().unwrap(),
             "Second cookie should be different"
         );
+    }
+
+    #[tokio::test]
+    async fn test_app_uri_invalid() {
+        // Arrange
+        let m = MockSetup::new().await;
+        let mut app = m.router();
+
+        let urilist = vec![
+            /* Different protocol */
+            "https://example.com",
+            /* Path appended without wildcard */
+            "http://example.com/",
+            "http://example.org/my/app",
+            /* Different domain */
+            "http://example.fr",
+            /* Different port */
+            "http://example.com:8080",
+        ];
+
+        for app_uri in urilist {
+            // Act
+            let response = app
+            .ready().await.unwrap().call(
+                Request::builder()
+                    .uri(format!("/auth/login?app_uri={app_uri}&redirect_uri=http://example.com&scope=openid&state=xyz"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+            let status = response.status();
+            let body = String::from_utf8(
+                hyper::body::to_bytes(response.into_body())
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+
+            // Assert
+            assert_eq!(
+                status,
+                StatusCode::BAD_REQUEST,
+                "Request should be denied, body was: {}",
+                body
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_app_uri_valid() {
+        // Arrange
+        let m = MockSetup::new().await;
+        let mut app = m.router();
+
+        let urilist = vec![
+            /* Exact match */
+            "http://example.com",
+            /* Paths matching the wildcard */
+            "http://example.org/my/app/*",
+            "http://example.org/my/app/",
+            "http://example.org/my/app/abc/",
+            "http://example.org/my/app/kp/h?id=34",
+        ];
+
+        for app_uri in urilist {
+            // Act
+            let response = app
+            .ready().await.unwrap().call(
+                Request::builder()
+                    .uri(format!("/auth/login?app_uri={app_uri}&redirect_uri=http://example.com&scope=openid&state=xyz"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+            let status = response.status();
+            let body = String::from_utf8(
+                hyper::body::to_bytes(response.into_body())
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+
+            // Assert
+            assert_eq!(
+                status,
+                StatusCode::SEE_OTHER,
+                "response should be redirect, but {}",
+                body
+            );
+        }
     }
 }

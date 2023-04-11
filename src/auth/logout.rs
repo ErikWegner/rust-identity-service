@@ -1,11 +1,12 @@
 use axum::{
     extract::{Query, State},
+    http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
 use axum_macros::debug_handler;
 use axum_sessions::extractors::WritableSession;
 use serde::Deserialize;
-use tracing::warn;
+use tracing::{trace, warn};
 
 use crate::session::SESSION_KEY_JWT;
 
@@ -33,6 +34,14 @@ pub(crate) struct LogoutQueryParams {
 pub struct LogoutAppSettings {
     pub(crate) logout_uri: String,
     pub(crate) _behavior: LogoutBehavior,
+    pub(crate) allowed_app_uris_match: Vec<String>,
+}
+
+impl LogoutAppSettings {
+    pub(crate) fn is_app_uri_allowed(&self, app_uri: &String) -> bool {
+        trace!("is_app_uri_allowed: app_uri: {}", app_uri);
+        self.allowed_app_uris_match.contains(app_uri)
+    }
 }
 
 #[debug_handler]
@@ -41,6 +50,9 @@ pub(crate) async fn logout(
     mut session: WritableSession,
     logout_query_params: Query<LogoutQueryParams>,
 ) -> Response {
+    if !logout_app_settings.is_app_uri_allowed(&logout_query_params.app_uri) {
+        return (StatusCode::BAD_REQUEST, "Invalid app_uri").into_response();
+    }
     let _ = session.insert("ridser_logout_app_uri", logout_query_params.app_uri.clone());
     let logout_uri = logout_app_settings.logout_uri;
     let session_tokens: Option<SessionTokens> = session.get(SESSION_KEY_JWT);
@@ -77,40 +89,107 @@ mod tests {
     };
     use tower::{Service, ServiceExt};
 
-    use crate::auth::{random_alphanumeric_string, tests::MockSetup};
+    use crate::auth::tests::MockSetup;
 
     #[tokio::test]
-    async fn test_handles_anonymous_state() {
+    async fn test_handles_anonymous_state_with_valid_app_uris() {
         // Arrange
         let m = MockSetup::new().await;
-        let app = m.router();
+        let mut app = m.router();
+        let urilist = vec![
+            "http://logout.example.com".to_string(),
+            "http://example.org/it/index".to_string(),
+        ];
 
-        // Act
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/auth/logout?app_uri=http://example.com&redirect_uri=http://example.com")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = response.status();
-        let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+        for app_uri in urilist {
+            // Act
+            let response = app
+                .ready()
                 .await
                 .unwrap()
-                .to_vec(),
-        )
-        .unwrap();
+                .call(
+                    Request::builder()
+                        .uri(format!(
+                            "/auth/logout?app_uri={app_uri}&redirect_uri=http://example.com"
+                        ))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let body = String::from_utf8(
+                hyper::body::to_bytes(response.into_body())
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
 
-        // Assert
-        assert_eq!(
-            status,
-            StatusCode::SEE_OTHER,
-            "response should be redirect, but {}",
-            body
-        );
+            // Assert
+            assert_eq!(
+                status,
+                StatusCode::SEE_OTHER,
+                "response should be redirect, but {}",
+                body
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handles_anonymous_state_with_invalid_app_uris() {
+        // Arrange
+        let m = MockSetup::new().await;
+        let mut app = m.router();
+        let urilist = vec![
+            /* Only a path */
+            "/".to_string(),
+            /* Different domain */
+            "http://start.com/".to_string(),
+            /* Path does not exactly match */
+            "http://example.org/it/index2".to_string(),
+            "http://example.org/it/index/".to_string(),
+            "http://logout.example.com/".to_string(),
+            /* Port */
+            "http://logout.example.com:8000".to_string(),
+            /* Protocol */
+            "https://logout.example.com".to_string(),
+        ];
+
+        for app_uri in urilist {
+            // Act
+            let response = app
+                .ready()
+                .await
+                .unwrap()
+                .call(
+                    Request::builder()
+                        .uri(format!(
+                            "/auth/logout?app_uri={app_uri}&redirect_uri=http://example.com"
+                        ))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let body = String::from_utf8(
+                hyper::body::to_bytes(response.into_body())
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+
+            // Assert
+            assert_eq!(
+                status,
+                StatusCode::BAD_REQUEST,
+                "Should be BAD REQUEST for app_uri {}, body was {}",
+                app_uri,
+                body
+            );
+        }
     }
 
     #[tokio::test]
@@ -124,7 +203,7 @@ mod tests {
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri("/auth/logout?app_uri=http://example.com&redirect_uri=http://example.com")
+                    .uri("/auth/logout?app_uri=http://logout.example.com&redirect_uri=http://example.com")
                     .header(COOKIE, session_cookie)
                     .body(Body::empty())
                     .unwrap(),
@@ -155,7 +234,7 @@ mod tests {
         let m = MockSetup::new().await;
         let mut app = m.router();
         let session_cookie = m.setup_authenticated_state().await;
-        let app_uri = format!("http://example.com/app/{}", random_alphanumeric_string(8));
+        let app_uri = "http://logout.example.com".to_string();
 
         // Act
         let _response_logout1 = app
