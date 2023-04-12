@@ -72,8 +72,7 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
     let session_layer = session_setup.get_session_layer(store)?;
     let oidc_client = init_oidc_client().await?;
     let bind_addr = socket_addr()?;
-    let proxy_rules: Vec<_> = dotenvy::dotenv_iter()?
-        .filter_map(|item| item.ok())
+    let proxy_rules: Vec<_> = dotenvy::vars()
         .filter_map(|(key, value)| {
             if key.starts_with("RIDSER_PROXY_TARGET_RULE_") && value.contains("=>") {
                 Some(value)
