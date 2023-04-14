@@ -46,17 +46,19 @@ pub(crate) struct ProxyConfig {
 }
 
 impl ProxyConfig {
-    fn base_url(&self, uri: &str) -> &str {
+    fn rewrite_uri(&self, uri: &str) -> String {
         self.extra_routes
             .iter()
             .find_map(|x| {
                 if uri.starts_with(x.path.as_str()) {
-                    Some(x.target.as_str())
+                    let striplen = x.path.len();
+                    let path = &uri.to_string()[striplen..];
+                    Some(format!("{}{}", x.target.as_str(), path))
                 } else {
                     None
                 }
             })
-            .unwrap_or(&self.base_url)
+            .unwrap_or(format!("{}{}", &self.base_url, uri))
     }
 
     pub(crate) fn try_init(
@@ -184,8 +186,7 @@ async fn proxy(
         .map(|v| v.as_str())
         .unwrap_or_else(|| req.uri().path());
 
-    // TODO: match extra_routes?
-    let uri = format!("{}{}", proxy_config.base_url(path_query), path_query);
+    let uri = proxy_config.rewrite_uri(path_query);
     debug!("Proxy {} request to new uri `{}`", req.method(), uri);
     let proxy_uri = Uri::try_from(uri.as_str()).map_err(|e| {
         debug!("Invalid proxy uri {:?}", e);
