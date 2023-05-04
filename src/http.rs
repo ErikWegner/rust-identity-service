@@ -1,5 +1,6 @@
 use std::{
     net::{IpAddr, SocketAddr},
+    path::PathBuf,
     str::FromStr,
 };
 
@@ -110,7 +111,7 @@ pub(crate) fn socket_addr() -> Result<SocketAddr> {
     Ok(SocketAddr::new(ip, port_parsed))
 }
 
-fn walk_dir(path: &str) -> Result<Vec<String>> {
+fn walk_dir(path: &str) -> Result<Vec<PathBuf>> {
     let files = std::fs::read_dir(path).context("Reading `files` directory")?;
     let mut paths = Vec::new();
     for entry in files {
@@ -122,7 +123,13 @@ fn walk_dir(path: &str) -> Result<Vec<String>> {
                 }
 
                 if entry.file_name() == "index.html" {
-                    paths.push(path.strip_prefix("files").unwrap().to_string());
+                    paths.push(
+                        entry
+                            .path()
+                            .parent()
+                            .expect("Parent path is accessible")
+                            .to_owned(),
+                    );
                 }
             }
             Err(e) => warn!("File system error: {:?}", e),
@@ -270,15 +277,21 @@ pub(crate) fn app(
         );
 
     for spa_app in spa_apps {
-        let uri_path = if spa_app.is_empty() {
+        let components: Vec<_> = spa_app
+            .components()
+            .skip(1) // first component is `/files` folder
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect();
+        let uri_path = if components.is_empty() {
             "/".to_string()
         } else {
-            spa_app.clone()
+            format!("/{}", components.join("/"))
         };
-        let fs_path = format!("files{}", spa_app);
-        debug!("Serving route {uri_path} from fs {fs_path}");
-        let serve_dir = ServeDir::new(fs_path.clone())
-            .not_found_service(ServeFile::new(format!("{fs_path}/index.html")));
+        let fs_path = spa_app.as_path();
+        debug!("Serving route {uri_path} from folder {:?}", fs_path);
+        let mut fallback = spa_app.clone();
+        fallback.push("index.html");
+        let serve_dir = ServeDir::new(fs_path.clone()).not_found_service(ServeFile::new(fallback));
 
         app = app.nest_service(&uri_path, serve_dir);
     }
