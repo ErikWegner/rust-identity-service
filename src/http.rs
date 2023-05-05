@@ -291,7 +291,7 @@ pub(crate) fn app(
         debug!("Serving route {uri_path} from folder {:?}", fs_path);
         let mut fallback = spa_app.clone();
         fallback.push("index.html");
-        let serve_dir = ServeDir::new(fs_path.clone()).not_found_service(ServeFile::new(fallback));
+        let serve_dir = ServeDir::new(fs_path).not_found_service(ServeFile::new(fallback));
 
         app = app.nest_service(&uri_path, serve_dir);
     }
