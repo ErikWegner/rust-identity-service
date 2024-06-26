@@ -67,7 +67,9 @@ fn init_session_vars() -> Result<SessionSetup> {
 
 pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
     let connection_url = env::var("RIDSER_REDIS_URL").context("missing RIDSER_REDIS_URL")?;
-    let (store, client) = redis_cons(&connection_url)?;
+    let (store, client) = redis_cons(&connection_url)
+        .await
+        .with_context(|| format!("Setup redis connection: {connection_url}"))?;
     let session_setup = init_session_vars()?;
     let session_layer = session_setup.get_session_layer(store)?;
     let oidc_client = init_oidc_client().await?;
@@ -120,9 +122,13 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     tracing::info!("💈 Listening on http://{}", &bind_addr);
-    axum::Server::bind(&bind_addr)
-        .serve(app?.into_make_service())
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
+        .await
+        .context("Cannot start server")?;
+
+    axum::serve(listener, app?.into_make_service())
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        .await
+        .context("error running server")?;
     Ok(())
 }

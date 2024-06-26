@@ -1,7 +1,7 @@
 use axum::Json;
 use axum_macros::debug_handler;
-use axum_sessions::extractors::ReadableSession;
 use serde::{Deserialize, Serialize};
+use tower_sessions::Session;
 
 use crate::session::SESSION_KEY_CSRF_TOKEN;
 
@@ -11,8 +11,12 @@ pub(crate) struct CsrfTokenResponse {
 }
 
 #[debug_handler]
-pub(crate) async fn csrftoken(session: ReadableSession) -> Json<CsrfTokenResponse> {
-    let session_csrf_token: String = session.get(SESSION_KEY_CSRF_TOKEN).unwrap_or_default();
+pub(crate) async fn csrftoken(session: Session) -> Json<CsrfTokenResponse> {
+    let session_csrf_token: String = session
+        .get(SESSION_KEY_CSRF_TOKEN)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_default();
     Json(CsrfTokenResponse {
         token: session_csrf_token,
     })
@@ -22,6 +26,7 @@ pub(crate) async fn csrftoken(session: ReadableSession) -> Json<CsrfTokenRespons
 mod tests {
     use crate::auth::{csrftoken::CsrfTokenResponse, tests::MockSetup};
     use axum::{body::Body, http::header::COOKIE, http::Request, http::StatusCode};
+    use http_body_util::BodyExt;
     use tower::ServiceExt;
 
     #[tokio::test]
@@ -43,9 +48,12 @@ mod tests {
             .unwrap();
         let status = response.status();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();
@@ -82,9 +90,12 @@ mod tests {
             .unwrap();
         let status = response.status();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();

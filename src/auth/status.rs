@@ -1,7 +1,7 @@
 use axum::Json;
-use axum_sessions::extractors::ReadableSession;
 use serde::Deserialize;
 use serde::Serialize;
+use tower_sessions::Session;
 
 use crate::session::SESSION_KEY_JWT;
 
@@ -35,8 +35,8 @@ fn status_response_map(session_tokens: Option<SessionTokens>) -> StatusResponse 
         })
 }
 
-pub(crate) async fn status(session: ReadableSession) -> Json<StatusResponse> {
-    let session_tokens: Option<SessionTokens> = session.get(SESSION_KEY_JWT);
+pub(crate) async fn status(session: Session) -> Json<StatusResponse> {
+    let session_tokens: Option<SessionTokens> = session.get(SESSION_KEY_JWT).await.unwrap_or(None);
     let p = status_response_map(session_tokens);
     Json(p)
 }
@@ -44,6 +44,7 @@ pub(crate) async fn status(session: ReadableSession) -> Json<StatusResponse> {
 #[cfg(test)]
 mod tests {
     use axum::{body::Body, http::header::COOKIE, http::Request, http::StatusCode};
+    use http_body_util::BodyExt;
     use tower::ServiceExt;
 
     use crate::auth::tests::MockSetup;
@@ -68,9 +69,12 @@ mod tests {
             .unwrap();
         let status = response.status();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();
@@ -107,9 +111,12 @@ mod tests {
             .unwrap();
         let status = response.status();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();

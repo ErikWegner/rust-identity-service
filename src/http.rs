@@ -9,20 +9,20 @@ use axum::{
     body::Body,
     http::{
         header::{AUTHORIZATION, COOKIE, HOST},
-        HeaderValue, Method, Request, StatusCode, Uri,
+        HeaderValue, Method, StatusCode, Uri,
     },
-    response::{IntoResponse, Response},
+    response::IntoResponse,
     routing::delete,
     Extension, Router,
 };
 use axum_extra::extract::CookieJar;
 use axum_macros::debug_handler;
-use axum_sessions::extractors::WritableSession;
-use hyper::client::HttpConnector;
 use hyper_rustls::HttpsConnector;
-use redis::Client;
+use hyper_util::rt::TokioExecutor;
 use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
+use tower_sessions::Session;
+use tower_sessions_redis_store::fred::prelude::RedisPool;
 use tracing::{debug, error, warn};
 
 use crate::{
@@ -31,6 +31,10 @@ use crate::{
     session::{RidserSessionLayer, SESSION_KEY_CSRF_TOKEN, SESSION_KEY_JWT},
 };
 
+type Client = hyper_util::client::legacy::Client<
+    HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+    Body,
+>;
 pub(crate) static HEADER_KEY_CSRF_TOKEN: &str = "x-csrf-token";
 
 #[derive(Debug, Clone)]
@@ -139,17 +143,19 @@ fn walk_dir(path: &str) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-fn api_proxy(session_layer: &RidserSessionLayer, proxy_config: &ProxyConfig) -> Router {
+fn api_proxy(session_layer: &RidserSessionLayer, proxy_config: &ProxyConfig) -> Result<Router> {
     proxy_config.extra_routes.iter().for_each(|er| {
         debug!("Adding extra route: {:?}", er);
     });
     let proxy_client_https = hyper_rustls::HttpsConnectorBuilder::new()
         .with_native_roots()
+        .context("Certificate roots")?
         .https_or_http()
         .enable_http1()
         .build();
-    let proxy_client = hyper::Client::builder().build::<_, hyper::Body>(proxy_client_https);
-    Router::new()
+    let proxy_client: Client =
+        hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(proxy_client_https);
+    Ok(Router::new()
         .route(
             "/*path",
             delete(proxy)
@@ -164,21 +170,22 @@ fn api_proxy(session_layer: &RidserSessionLayer, proxy_config: &ProxyConfig) -> 
                 .layer(session_layer.clone())
                 .layer(Extension(proxy_config.clone()))
                 .layer(Extension(proxy_client)),
-        )
+        ))
 }
 
 #[debug_handler]
 async fn proxy(
     Extension(proxy_config): Extension<ProxyConfig>,
-    Extension(client): Extension<hyper::client::Client<HttpsConnector<HttpConnector>>>,
-    session: WritableSession,
+    Extension(client): Extension<Client>,
+    session: Session,
     jar: CookieJar,
-    mut req: Request<Body>,
-) -> Result<Response<hyper::Body>, Response> {
+    mut req: axum::extract::Request,
+) -> std::result::Result<axum::response::Response, axum::response::Response> {
     if req.method() != Method::GET {
         // Check CSRF token
         let request_csrf_token = req.headers().get(HEADER_KEY_CSRF_TOKEN);
-        let session_csrf_token: Option<String> = session.get(SESSION_KEY_CSRF_TOKEN);
+        let session_csrf_token: Option<String> =
+            session.get(SESSION_KEY_CSRF_TOKEN).await.unwrap_or(None);
         if request_csrf_token.is_none()
             || session_csrf_token.is_none()
             || request_csrf_token.unwrap().as_bytes() != session_csrf_token.unwrap().as_bytes()
@@ -227,7 +234,7 @@ async fn proxy(
         );
     }
 
-    let jwt: Option<SessionTokens> = session.get(SESSION_KEY_JWT);
+    let jwt: Option<SessionTokens> = session.get(SESSION_KEY_JWT).await.unwrap_or(None);
     if let Some(session_tokens) = jwt {
         req.headers_mut().append(
             AUTHORIZATION,
@@ -243,34 +250,37 @@ async fn proxy(
         );
     }
 
-    client.request(req).await.map_err(|e| {
-        error!("Failed to proxy request: {:?}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Cannot proxy request".to_string(),
-        )
-            .into_response()
-    })
+    Ok(client
+        .request(req)
+        .await
+        .map_err(|e| {
+            error!("Failed to proxy request: {:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Cannot proxy request".to_string(),
+            )
+                .into_response()
+        })?
+        .into_response())
 }
 
 pub(crate) fn app(
     oidc_client: OIDCClient,
     session_layer: &RidserSessionLayer,
     proxy_config: &ProxyConfig,
-    client: &Client,
+    client: &RedisPool,
     remaining_secs_threshold: u64,
     app_config: AppConfigurationState,
 ) -> Result<Router> {
     let spa_apps = walk_dir("files")?;
     let mut app = Router::new()
-        .nest("/api", api_proxy(session_layer, proxy_config))
+        .nest("/api", api_proxy(session_layer, proxy_config)?)
         .nest("/app", health_routes(client))
         .nest(
             "/auth",
             auth_routes(
                 oidc_client,
                 session_layer,
-                client,
                 remaining_secs_threshold,
                 app_config,
             ),
@@ -291,7 +301,7 @@ pub(crate) fn app(
         debug!("Serving route {uri_path} from folder {:?}", fs_path);
         let mut fallback = spa_app.clone();
         fallback.push("index.html");
-        let serve_dir = ServeDir::new(fs_path).not_found_service(ServeFile::new(fallback));
+        let serve_dir = ServeDir::new(fs_path).fallback(ServeFile::new(fallback));
 
         app = app.nest_service(&uri_path, serve_dir);
     }

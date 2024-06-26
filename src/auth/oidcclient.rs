@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use axum_sessions::async_session::base64;
+use base64::{prelude::BASE64_STANDARD, Engine};
 use oauth2::{basic::BasicTokenType, HttpRequest, HttpResponse};
 use openidconnect::{
     core::{
@@ -51,7 +51,7 @@ pub struct OIDCClient {
 
 fn jwt_exp(jwt: &str) -> Result<u64> {
     let payload = jwt.split('.').nth(1).unwrap_or_default();
-    let payload = base64::decode(payload)?;
+    let payload = BASE64_STANDARD.decode(payload)?;
     let payload = String::from_utf8(payload)?;
     let jwtdecoded: ExpFieldInJWT = serde_json::from_str(payload.as_str())?;
     Ok(jwtdecoded.exp)
