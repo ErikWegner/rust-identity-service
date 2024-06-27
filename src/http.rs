@@ -89,16 +89,6 @@ impl ProxyConfig {
     }
 }
 
-trait ToCookieHeader {
-    fn to_cookie_header(&self) -> String;
-}
-
-impl ToCookieHeader for CookieJar {
-    fn to_cookie_header(&self) -> String {
-        todo!()
-    }
-}
-
 pub(crate) fn socket_addr() -> Result<SocketAddr> {
     let port_str = dotenvy::var("RIDSER_BIND_PORT").unwrap_or_else(|_| String::from("3000"));
     let port_parsed = port_str
