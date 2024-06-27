@@ -92,7 +92,12 @@ async fn async_insecure_http_client(
     request: HttpRequest,
 ) -> Result<HttpResponse, oauth2::reqwest::Error<reqwest::Error>> {
     let client = {
-        let builder = reqwest::Client::builder().danger_accept_invalid_certs(true);
+        let danger_accept_invalid_certs = std::env::var("RIDSER_DANGER_ACCEPT_INVALID_CERTS")
+            .unwrap_or_default()
+            .to_lowercase()
+            == "true";
+        let builder =
+            reqwest::Client::builder().danger_accept_invalid_certs(danger_accept_invalid_certs);
 
         // Following redirects opens the client up to SSRF vulnerabilities.
         // but this is not possible to prevent on wasm targets
