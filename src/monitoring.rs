@@ -1,16 +1,18 @@
-use std::time::Duration;
-
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
     Extension, Router,
 };
-use redis::Client;
+use tower_sessions_redis_store::fred::{
+    clients::{RedisClient, RedisPool},
+    interfaces::ClientLike,
+};
 use tracing::error;
 
-async fn health_check(Extension(client): Extension<Client>) -> Response {
-    let con = client.get_connection_with_timeout(Duration::from_millis(300));
+async fn health_check(Extension(client): Extension<RedisClient>) -> Response {
+    let con: Result<(), _> = client.ping().await;
+
     if let Err(err) = con {
         error!("Failed to connect to redis: {:?}", err);
         return (StatusCode::SERVICE_UNAVAILABLE, "Unhealthy").into_response();
@@ -19,11 +21,10 @@ async fn health_check(Extension(client): Extension<Client>) -> Response {
     (StatusCode::OK, "OK").into_response()
 }
 
-pub(crate) fn health_routes(client: &Client) -> Router {
-    Router::new().route("/up", get(|| async { "up" })).route(
-        "/health",
-        get(health_check).layer(Extension(client.clone())),
-    )
+pub(crate) fn health_routes(client: RedisPool) -> Router {
+    Router::new()
+        .route("/up", get(|| async { "up" }))
+        .route("/health", get(health_check).layer(Extension(client)))
 }
 
 #[cfg(test)]
@@ -57,7 +58,13 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("collect")
+            .to_bytes()
+            .to_vec();
         assert_eq!(&body[..], b"up");
     }
 
@@ -78,7 +85,13 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("collect")
+            .to_bytes()
+            .to_vec();
         assert_eq!(&body[..], b"OK");
     }
 
@@ -99,7 +112,13 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
-        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("collect")
+            .to_bytes()
+            .to_vec();
         assert_eq!(&body[..], b"Unhealthy");
     }
 }

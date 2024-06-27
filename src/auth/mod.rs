@@ -22,9 +22,9 @@ use axum::{
 use openidconnect::{
     core::CoreIdToken, url::Url, AccessToken, CsrfToken, Nonce, PkceCodeVerifier, RefreshToken,
 };
-use redis::Client;
 use serde::{Deserialize, Serialize};
 use tower::ServiceBuilder;
+use tower_sessions_redis_store::fred::clients::RedisPool;
 
 use crate::session::RidserSessionLayer;
 
@@ -139,7 +139,7 @@ impl FromRef<AppConfigurationState> for LogoutAppSettings {
 pub(crate) fn auth_routes(
     oidc_client: OIDCClient,
     session_layer: &RidserSessionLayer,
-    client: &Client,
+    client: RedisPool,
     remaining_secs_threshold: u64,
     app_config: AppConfigurationState,
 ) -> Router {

@@ -7,7 +7,7 @@ use axum::{
     Extension,
 };
 use axum_macros::debug_handler;
-use axum_sessions::extractors::WritableSession;
+use tower_sessions::Session;
 use tracing::debug;
 
 use crate::{
@@ -52,21 +52,29 @@ impl RefreshLockManager {
 pub(crate) async fn refresh(
     Extension(refresh_lock): Extension<RefreshLockManager>,
     Extension(client): Extension<OIDCClient>,
-    mut session: WritableSession,
+    session: Session,
 ) -> Result<Response, Response> {
-    let userid = session.get::<String>(SESSION_KEY_USERID).ok_or_else(|| {
-        debug!("No user id in session");
-        (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
-    })?;
+    let userid = session
+        .get::<String>(SESSION_KEY_USERID)
+        .await
+        .unwrap_or(None)
+        .ok_or_else(|| {
+            debug!("No user id in session");
+            (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+        })?;
 
     if refresh_lock.user_is_refreshing(&userid) {
         return Err((StatusCode::CONFLICT, "Refresh pending...").into_response());
     }
 
-    let session_tokens: SessionTokens = session.get(SESSION_KEY_JWT).ok_or_else(|| {
-        debug!("No tokens in session");
-        (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
-    })?;
+    let session_tokens: SessionTokens = session
+        .get(SESSION_KEY_JWT)
+        .await
+        .unwrap_or(None)
+        .ok_or_else(|| {
+            debug!("No tokens in session");
+            (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+        })?;
 
     if session_tokens.ttl_gt(refresh_lock.remaining_secs_threshold) {
         return Err((StatusCode::BAD_REQUEST, "Refresh too early".to_string()).into_response());
@@ -134,9 +142,12 @@ mod tests {
             .unwrap();
         let status = response.status();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();

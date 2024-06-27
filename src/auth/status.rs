@@ -1,7 +1,7 @@
 use axum::Json;
-use axum_sessions::extractors::ReadableSession;
 use serde::Deserialize;
 use serde::Serialize;
+use tower_sessions::Session;
 
 use crate::session::SESSION_KEY_JWT;
 
@@ -35,8 +35,12 @@ fn status_response_map(session_tokens: Option<SessionTokens>) -> StatusResponse 
         })
 }
 
-pub(crate) async fn status(session: ReadableSession) -> Json<StatusResponse> {
-    let session_tokens: Option<SessionTokens> = session.get(SESSION_KEY_JWT);
+pub(crate) async fn status(session: Session) -> Json<StatusResponse> {
+    let session_tokens: Option<SessionTokens> = session
+        .get(SESSION_KEY_JWT)
+        .await
+        .unwrap_or_default()
+        .unwrap_or_default();
     let p = status_response_map(session_tokens);
     Json(p)
 }
@@ -68,9 +72,12 @@ mod tests {
             .unwrap();
         let status = response.status();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();
@@ -107,9 +114,12 @@ mod tests {
             .unwrap();
         let status = response.status();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();

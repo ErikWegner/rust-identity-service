@@ -6,9 +6,9 @@ use axum::{
     Extension,
 };
 use axum_macros::debug_handler;
-use axum_sessions::extractors::WritableSession;
-use redis::Client;
 use serde::Deserialize;
+use tower_sessions::Session;
+use tower_sessions_redis_store::fred::clients::RedisPool;
 use tracing::{debug, error, trace};
 
 use crate::{
@@ -77,15 +77,15 @@ impl LoginAppSettings {
 pub(crate) async fn login(
     State(login_app_settings): State<LoginAppSettings>,
     Extension(oidc_client): Extension<OIDCClient>,
-    Extension(client): Extension<Client>,
-    mut session: WritableSession,
+    Extension(client): Extension<RedisPool>,
+    session: Session,
     login_query_params: Query<LoginQueryParams>,
 ) -> Result<Response, Response> {
     if !login_app_settings.is_app_uri_allowed(login_query_params.app_uri.as_str()) {
         debug!("app_uri {} is not allowed", login_query_params.app_uri);
         return Err((StatusCode::BAD_REQUEST, "Invalid app_uri").into_response());
     }
-    purge_store_and_regenerate_session(&mut session, &client).await;
+    purge_store_and_regenerate_session(&session, client.next()).await;
     let state: String = random_alphanumeric_string(20);
     let d = oidc_client
         .authorize_data(AuthorizeRequestData {
@@ -151,9 +151,12 @@ mod tests {
             .unwrap();
         let status = response.status();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();
@@ -239,9 +242,12 @@ mod tests {
             .unwrap();
             let status = response.status();
             let body = String::from_utf8(
-                hyper::body::to_bytes(response.into_body())
+                response
+                    .into_body()
+                    .collect()
                     .await
-                    .unwrap()
+                    .expect("collect")
+                    .to_bytes()
                     .to_vec(),
             )
             .unwrap();
@@ -285,9 +291,12 @@ mod tests {
             .unwrap();
             let status = response.status();
             let body = String::from_utf8(
-                hyper::body::to_bytes(response.into_body())
+                response
+                    .into_body()
+                    .collect()
                     .await
-                    .unwrap()
+                    .expect("collect")
+                    .to_bytes()
                     .to_vec(),
             )
             .unwrap();

@@ -4,8 +4,8 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use axum_macros::debug_handler;
-use axum_sessions::extractors::WritableSession;
 use serde::Deserialize;
+use tower_sessions::Session;
 use tracing::{trace, warn};
 
 use crate::session::SESSION_KEY_JWT;
@@ -47,7 +47,7 @@ impl LogoutAppSettings {
 #[debug_handler]
 pub(crate) async fn logout(
     State(logout_app_settings): State<LogoutAppSettings>,
-    mut session: WritableSession,
+    session: Session,
     logout_query_params: Query<LogoutQueryParams>,
 ) -> Response {
     if !logout_app_settings.is_app_uri_allowed(&logout_query_params.app_uri) {
@@ -55,7 +55,7 @@ pub(crate) async fn logout(
     }
     let _ = session.insert("ridser_logout_app_uri", logout_query_params.app_uri.clone());
     let logout_uri = logout_app_settings.logout_uri;
-    let session_tokens: Option<SessionTokens> = session.get(SESSION_KEY_JWT);
+    let session_tokens: Option<SessionTokens> = session.get(SESSION_KEY_JWT).await.unwrap_or(None);
     let id_token = session_tokens.map(|st| st.id_token).unwrap_or_default();
     let post_logout_redirect_uri = logout_query_params.redirect_uri.clone();
     let uri = format!(
@@ -66,15 +66,17 @@ pub(crate) async fn logout(
 }
 
 #[debug_handler]
-pub(crate) async fn logout_callback(mut session: WritableSession) -> Response {
+pub(crate) async fn logout_callback(session: Session) -> Response {
     let app_uri = session
         .get::<String>("ridser_logout_app_uri")
+        .await
+        .unwrap_or_default()
         .unwrap_or_else(|| {
             warn!("ridser_logout_app_uri not found in session");
             "/".to_string()
         });
 
-    session.destroy();
+    let _: Result<(), _> = session.flush().await;
     Redirect::to(&app_uri).into_response()
 }
 
@@ -119,9 +121,12 @@ mod tests {
                 .unwrap();
             let status = response.status();
             let body = String::from_utf8(
-                hyper::body::to_bytes(response.into_body())
+                response
+                    .into_body()
+                    .collect()
                     .await
-                    .unwrap()
+                    .expect("collect")
+                    .to_bytes()
                     .to_vec(),
             )
             .unwrap();
@@ -174,9 +179,12 @@ mod tests {
                 .unwrap();
             let status = response.status();
             let body = String::from_utf8(
-                hyper::body::to_bytes(response.into_body())
+                response
+                    .into_body()
+                    .collect()
                     .await
-                    .unwrap()
+                    .expect("collect")
+                    .to_bytes()
                     .to_vec(),
             )
             .unwrap();
@@ -212,9 +220,12 @@ mod tests {
             .unwrap();
         let status = response.status();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();
@@ -277,9 +288,12 @@ mod tests {
             .map(|hv| hv.to_str().unwrap().to_string())
             .unwrap_or_default();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();
