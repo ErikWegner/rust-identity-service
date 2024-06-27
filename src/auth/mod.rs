@@ -203,7 +203,7 @@ mod tests {
         Nonce, PrivateSigningKey, RefreshToken, ResponseTypes, Scope, StandardClaims,
         SubjectIdentifier, TokenUrl, UserInfoUrl,
     };
-    use tower_sessions::{session::Id, Session, SessionStore};
+    use tower_sessions::{session::Id, Session};
     use tower_sessions_redis_store::{fred::clients::RedisPool, RedisStore};
     use tracing_subscriber::filter::EnvFilter;
     use wiremock::{
