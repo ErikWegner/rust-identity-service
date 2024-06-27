@@ -29,6 +29,10 @@ pub(crate) struct LoginQueryParams {
     redirect_uri: String,
     #[serde(rename = "scope")]
     scope: String,
+    #[serde(rename = "ui_locales")]
+    ui_locales: Option<String>,
+    #[serde(rename = "prompt")]
+    prompt: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -88,6 +92,8 @@ pub(crate) async fn login(
             redirect_uri: login_query_params.redirect_uri.clone(),
             scope: login_query_params.scope.clone(),
             state,
+            ui_locales: login_query_params.ui_locales.clone(),
+            prompt: login_query_params.prompt.clone(),
         })
         .await
         .map_err(|e| {
@@ -117,7 +123,7 @@ mod tests {
     use axum::{
         body::Body,
         http::{
-            header::{COOKIE, SET_COOKIE},
+            header::{COOKIE, LOCATION, SET_COOKIE},
             Request,
         },
     };
@@ -294,5 +300,73 @@ mod tests {
                 body
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_login_sends_redirect_with_ui_locales() {
+        // Arrange
+        let m = MockSetup::new().await;
+        let app = m.router();
+
+        // Act
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid&state=xyz&ui_locales=de")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let url = response
+            .headers()
+            .get(LOCATION)
+            .expect("header value")
+            .to_str()
+            .expect("to str")
+            .split('?')
+            .last()
+            .expect("last");
+
+        // Assert
+        assert!(
+            url.contains("ui_locales=de"),
+            "url should contain ui_locales: {}",
+            url
+        );
+    }
+
+    #[tokio::test]
+    async fn test_login_sends_redirect_with_prompt_none() {
+        // Arrange
+        let m = MockSetup::new().await;
+        let app = m.router();
+
+        // Act
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid&state=xyz&prompt=none")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let url = response
+            .headers()
+            .get(LOCATION)
+            .expect("header value")
+            .to_str()
+            .expect("to str")
+            .split('?')
+            .last()
+            .expect("last");
+
+        // Assert
+        assert!(
+            url.contains("prompt=none"),
+            "url should contain prompt: {}",
+            url
+        );
     }
 }

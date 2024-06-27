@@ -37,7 +37,12 @@ mod tests {
     use super::*;
 
     fn redis_client() -> Client {
-        Client::open("redis://redis/").unwrap()
+        Client::open(
+            std::env::var("RIDSER_TEST_REDIS_URL")
+                .unwrap_or_else(|_| "redis://redis/".to_string())
+                .as_ref(),
+        )
+        .unwrap()
     }
 
     #[tokio::test]

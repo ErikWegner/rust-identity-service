@@ -42,6 +42,8 @@ pub(crate) struct AuthorizeRequestData {
     pub(crate) redirect_uri: String,
     pub(crate) state: String,
     pub(crate) scope: String,
+    pub(crate) prompt: Option<String>,
+    pub(crate) ui_locales: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -181,7 +183,7 @@ impl OIDCClient {
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
         // Generate the full authorization URL.
-        let (auth_url, csrf_token, nonce) = self
+        let mut b = self
             .client
             .authorize_url(
                 CoreAuthenticationFlow::AuthorizationCode,
@@ -194,8 +196,17 @@ impl OIDCClient {
             .set_pkce_challenge(pkce_challenge)
             .set_redirect_uri(Cow::Owned(RedirectUrl::new(
                 authorize_request.redirect_uri,
-            )?))
-            .url();
+            )?));
+        if let Some(prompt) = authorize_request.prompt {
+            if prompt == "none" {
+                b = b.add_prompt(openidconnect::core::CoreAuthPrompt::None);
+            }
+        }
+        if let Some(ui_locale) = authorize_request.ui_locales {
+            b = b.add_ui_locale(openidconnect::LanguageTag::new(ui_locale));
+        }
+
+        let (auth_url, csrf_token, nonce) = b.url();
 
         Ok(AuthorizeData::new(
             auth_url,

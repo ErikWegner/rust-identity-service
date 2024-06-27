@@ -446,8 +446,12 @@ mod tests {
                     .expect("OIDCClient creation failed");
 
             let session_secret: String = random_alphanumeric_string(64);
-            let (session_store, redis_client) =
-                redis_cons("redis://redis/").expect("Redis setup failed");
+            let (session_store, redis_client) = redis_cons(
+                std::env::var("RIDSER_TEST_REDIS_URL")
+                    .unwrap_or_else(|_| "redis://redis/".to_string())
+                    .as_ref(),
+            )
+            .expect("Redis setup failed");
             let session_setup = SessionSetup {
                 secret: session_secret.clone(),
                 cookie_name: cookie_name.clone(),
