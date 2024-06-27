@@ -33,23 +33,36 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
+    use http_body_util::BodyExt;
     use tower::ServiceExt;
+    use tower_sessions_redis_store::fred::types::{RedisConfig, Server, ServerConfig};
 
     use super::*;
 
-    fn redis_client() -> Client {
-        Client::open(
-            std::env::var("RIDSER_TEST_REDIS_URL")
-                .unwrap_or_else(|_| "redis://redis/".to_string())
-                .as_ref(),
+    fn redis_client(connection_url: &str) -> RedisPool {
+        RedisPool::new(
+            RedisConfig {
+                server: ServerConfig::Centralized {
+                    server: Server::try_from(connection_url).expect("Parsing redis connection url"),
+                },
+                ..Default::default()
+            },
+            None,
+            None,
+            None,
+            6,
         )
-        .unwrap()
+        .expect("Redis setup")
     }
 
     #[tokio::test]
     async fn test_up() {
-        let client = redis_client();
-        let app = health_routes(&client);
+        let client = redis_client(
+            std::env::var("RIDSER_TEST_REDIS_URL")
+                .unwrap_or_else(|_| "redis:6379".to_string())
+                .as_ref(),
+        );
+        let app = health_routes(client);
 
         let response = app
             .oneshot(Request::builder().uri("/up").body(Body::empty()).unwrap())
@@ -70,8 +83,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_health() {
-        let client = redis_client();
-        let app = health_routes(&client);
+        let client = redis_client(
+            std::env::var("RIDSER_TEST_REDIS_URL")
+                .unwrap_or_else(|_| "redis:6379".to_string())
+                .as_ref(),
+        );
+        let app = health_routes(client);
 
         let response = app
             .oneshot(
@@ -97,8 +114,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_checks_redis() {
-        let client = Client::open("redis://redis-wrong-host/").unwrap();
-        let app = health_routes(&client);
+        let client = redis_client("redis-wrong-host:6379");
+        let app = health_routes(client);
 
         let response = app
             .oneshot(

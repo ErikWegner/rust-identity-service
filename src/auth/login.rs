@@ -127,6 +127,7 @@ mod tests {
             Request,
         },
     };
+    use http_body_util::BodyExt;
     use tower::{Service, ServiceExt};
 
     use crate::auth::tests::MockSetup;
@@ -180,7 +181,12 @@ mod tests {
 
         // Act
         let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
-        let response1 = app.ready().await.unwrap().call(request).await.unwrap();
+        let response1 = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .unwrap();
         let status1 = response1.status();
         let cookie1 = response1.headers().get(SET_COOKIE).unwrap();
 
@@ -189,7 +195,12 @@ mod tests {
             .header(COOKIE, cookie1.clone())
             .body(Body::empty())
             .unwrap();
-        let response2 = app.ready().await.unwrap().call(request).await.unwrap();
+        let response2 = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .unwrap();
         let status2 = response2.status();
         let cookie2 = response2.headers().get(SET_COOKIE).unwrap();
 
@@ -231,8 +242,7 @@ mod tests {
 
         for app_uri in urilist {
             // Act
-            let response = app
-            .ready().await.unwrap().call(
+            let response = ServiceExt::<Request<Body>>::ready(&mut app).await.unwrap().call(
                 Request::builder()
                     .uri(format!("/auth/login?app_uri={app_uri}&redirect_uri=http://example.com&scope=openid&state=xyz"))
                     .body(Body::empty())
@@ -280,8 +290,7 @@ mod tests {
 
         for app_uri in urilist {
             // Act
-            let response = app
-            .ready().await.unwrap().call(
+            let response = ServiceExt::<Request<Body>>::ready(&mut app).await.unwrap().call(
                 Request::builder()
                     .uri(format!("/auth/login?app_uri={app_uri}&redirect_uri=http://example.com&scope=openid&state=xyz"))
                     .body(Body::empty())

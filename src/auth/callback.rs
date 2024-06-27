@@ -42,9 +42,11 @@ pub(super) async fn callback_post_token_exchange(
 ) {
     purge_store_and_regenerate_session(session, pool.next()).await;
 
-    let _ = session.insert(SESSION_KEY_JWT, jwt);
-    let _ = session.insert(SESSION_KEY_CSRF_TOKEN, random_alphanumeric_string(24));
-    let _ = session.insert(SESSION_KEY_USERID, userid);
+    let _ = session.insert(SESSION_KEY_JWT, jwt).await;
+    let _ = session
+        .insert(SESSION_KEY_CSRF_TOKEN, random_alphanumeric_string(24))
+        .await;
+    let _ = session.insert(SESSION_KEY_USERID, userid).await;
 }
 
 #[debug_handler]
@@ -96,6 +98,7 @@ mod tests {
             Request,
         },
     };
+    use http_body_util::BodyExt; // for `collect`
     use hyper::Uri;
     use tower::{Service, ServiceExt};
 
@@ -112,7 +115,12 @@ mod tests {
 
         // Act
         let request = Request::builder().uri("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid".to_string()).body(Body::empty()).unwrap();
-        let response1 = app.ready().await.unwrap().call(request).await.unwrap();
+        let response1 = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .unwrap();
         let cookie1 = response1.headers().get(SET_COOKIE).unwrap();
         let redirect_uri1 = response1.headers().get(LOCATION).unwrap();
         let uri = Uri::from_str(redirect_uri1.to_str().unwrap()).unwrap();
@@ -134,7 +142,12 @@ mod tests {
             .header(COOKIE, cookie1.clone())
             .body(Body::empty())
             .unwrap();
-        let response2 = app.ready().await.unwrap().call(request).await.unwrap();
+        let response2 = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .unwrap();
         let status2 = response2.status();
         let headers2 = response2.headers().clone();
         let body = String::from_utf8(

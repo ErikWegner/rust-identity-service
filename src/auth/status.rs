@@ -48,6 +48,7 @@ pub(crate) async fn status(session: Session) -> Json<StatusResponse> {
 #[cfg(test)]
 mod tests {
     use axum::{body::Body, http::header::COOKIE, http::Request, http::StatusCode};
+    use http_body_util::BodyExt;
     use tower::ServiceExt;
 
     use crate::auth::tests::MockSetup;

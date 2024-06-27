@@ -55,7 +55,8 @@ pub(crate) async fn redis_cons(connection_url: &str) -> Result<(RedisStore<Redis
     let pool = RedisPool::new(
         RedisConfig {
             server: ServerConfig::Centralized {
-                server: Server::try_from(connection_url).context("Parsing redis connection url")?,
+                server: Server::try_from(connection_url)
+                    .with_context(|| format!("Parsing redis connection url {connection_url}"))?,
             },
             ..Default::default()
         },

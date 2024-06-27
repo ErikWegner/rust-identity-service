@@ -89,6 +89,7 @@ mod tests {
             Request, StatusCode,
         },
     };
+    use http_body_util::BodyExt;
     use tower::{Service, ServiceExt};
 
     use crate::auth::tests::MockSetup;
@@ -105,8 +106,7 @@ mod tests {
 
         for app_uri in urilist {
             // Act
-            let response = app
-                .ready()
+            let response = ServiceExt::<Request<Body>>::ready(&mut app)
                 .await
                 .unwrap()
                 .call(
@@ -163,8 +163,7 @@ mod tests {
 
         for app_uri in urilist {
             // Act
-            let response = app
-                .ready()
+            let response = ServiceExt::<Request<Body>>::ready(&mut app)
                 .await
                 .unwrap()
                 .call(
@@ -248,8 +247,7 @@ mod tests {
         let app_uri = "http://logout.example.com".to_string();
 
         // Act
-        let _response_logout1 = app
-            .ready()
+        let _response_logout1 = ServiceExt::<Request<Body>>::ready(&mut app)
             .await
             .unwrap()
             .call(
@@ -263,8 +261,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let response = app
-            .ready()
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
             .await
             .unwrap()
             .call(

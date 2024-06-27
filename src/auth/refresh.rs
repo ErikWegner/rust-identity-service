@@ -116,6 +116,7 @@ pub(crate) async fn refresh(
 #[cfg(test)]
 mod tests {
     use axum::{body::Body, http::header::COOKIE, http::Request, http::StatusCode};
+    use http_body_util::BodyExt;
     use tower::ServiceExt;
 
     use crate::auth::tests::MockSetup;
