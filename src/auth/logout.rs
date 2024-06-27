@@ -258,7 +258,7 @@ mod tests {
             .unwrap()
             .call(
                 Request::builder()
-                    .uri(format!("/auth/logoutcallback"))
+                    .uri("/auth/logoutcallback".to_string())
                     .header(COOKIE, session_cookie)
                     .body(Body::empty())
                     .unwrap(),
