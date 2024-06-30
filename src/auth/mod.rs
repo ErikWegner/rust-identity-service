@@ -188,9 +188,12 @@ pub(crate) fn random_alphanumeric_string(length: usize) -> String {
 mod tests {
     use std::{sync::Arc, time::SystemTime};
 
-    use axum::{extract::FromRequestParts, http::HeaderValue, Router};
+    use axum::{body::Body, extract::FromRequestParts, http::HeaderValue, Router};
     use chrono::Utc;
-    use hyper::Request;
+    use hyper::{
+        header::{COOKIE, SET_COOKIE},
+        Request,
+    };
     use once_cell::sync::Lazy;
     use openidconnect::{
         core::{
@@ -203,11 +206,12 @@ mod tests {
         Nonce, PrivateSigningKey, RefreshToken, ResponseTypes, Scope, StandardClaims,
         SubjectIdentifier, TokenUrl, UserInfoUrl,
     };
-    use tower_sessions::{session::Id, Session};
+    use tower::{Service, ServiceExt};
+    use tower_sessions::{session::Id, Session, SessionManager};
     use tower_sessions_redis_store::{fred::clients::RedisPool, RedisStore};
     use tracing_subscriber::filter::EnvFilter;
     use wiremock::{
-        matchers::{method, path},
+        matchers::{method, path, query_param},
         Mock, MockServer, ResponseTemplate,
     };
 
@@ -528,7 +532,71 @@ mod tests {
                 .await;
         }
 
-        pub async fn setup_authenticated_state(&self) -> String {
+        pub async fn setup_authenticated_state(&self, app: &mut Router) -> String {
+            // Call login to create a session
+            let login_request = Request::builder()
+                .uri("/auth/login")
+                .body(Body::empty())
+                .unwrap();
+            let login_response = ServiceExt::<Request<Body>>::ready(app)
+                .await
+                .unwrap()
+                .call(login_request)
+                .await
+                .unwrap();
+            // Extract session cookie
+            let session_cookie = login_response
+                .headers()
+                .get(SET_COOKIE)
+                .expect("Login response should have a session cookie")
+                .to_str()
+                .expect("Session cookie should be a string")
+                .split(';')
+                .find(|s| s.starts_with(&self.cookie_name))
+                .expect("Login response should have a session cookie");
+
+            // prepare mock server for token exchange
+            let code = random_alphanumeric_string(32);
+            let nonce = random_alphanumeric_string(18);
+            Mock::given(method("GET"))
+                .and(path("/token"))
+                .and(query_param("code", &code))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    oidc_token(&self.issuer_url, &self.client_id, &nonce),
+                    "application/json",
+                ))
+                .mount(&self.mock_server)
+                .await;
+
+            // Run callback request
+            let callback_request = Request::builder()
+                .uri(format!("/auth/callback?code={}", &code))
+                .header(COOKIE, session_cookie)
+                .body(Body::empty())
+                .unwrap();
+            let callback_response = ServiceExt::<Request<Body>>::ready(app)
+                .await
+                .unwrap()
+                .call(callback_request)
+                .await
+                .unwrap();
+            // Extract session cookie for authenticated state
+            let authenticated_cookie = login_response
+                .headers()
+                .get(SET_COOKIE)
+                .expect("Callback response should have a session cookie")
+                .to_str()
+                .expect("Session cookie should be a string")
+                .split(';')
+                .find(|s| s.starts_with(&self.cookie_name))
+                .expect("Callback response should have a session cookie");
+
+            assert_eq!(callback_response.status(), 200);
+
+            authenticated_cookie.to_string()
+        }
+
+        pub async fn setup_authenticated_state_to_be_replaced(&self) -> String {
             let id = Id::default();
             // Generate a session cookie
             let session = Session::new(Some(id), Arc::new(self.session_store.clone()), None);
@@ -548,6 +616,7 @@ mod tests {
 
             let request = Request::builder().method("GET").uri("/").body(()).unwrap();
             let mut request_parts = request.into_parts().0;
+            request_parts.extensions.insert(session);
             let state = ();
             let mut ws = Session::from_request_parts(&mut request_parts, &state)
                 .await

@@ -27,7 +27,7 @@ mod tests {
     use crate::auth::{csrftoken::CsrfTokenResponse, tests::MockSetup};
     use axum::{body::Body, http::header::COOKIE, http::Request, http::StatusCode};
     use http_body_util::BodyExt;
-    use tower::ServiceExt;
+    use tower::{Service, ServiceExt};
 
     #[tokio::test]
     async fn it_returns_empty_value_for_anonymous_access() {
@@ -73,12 +73,14 @@ mod tests {
     async fn it_returns_a_value_for_authenticated_requests() {
         // Arrange
         let m = MockSetup::new().await;
-        let app = m.router();
-        let session_cookie = m.setup_authenticated_state().await;
+        let mut app = m.router();
+        let session_cookie = m.setup_authenticated_state(&mut app).await;
 
         // Act
-        let response = app
-            .oneshot(
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await
+            .unwrap()
+            .call(
                 Request::builder()
                     .uri("/auth/csrftoken")
                     .method("POST")

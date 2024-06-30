@@ -99,8 +99,8 @@ mod tests {
     async fn test_handles_authenticated_state() {
         // Arrange
         let m = MockSetup::new().await;
-        let app = m.router();
-        let session_cookie = m.setup_authenticated_state().await;
+        let mut app = m.router();
+        let session_cookie = m.setup_authenticated_state(&mut app).await;
 
         // Act
         let response = app

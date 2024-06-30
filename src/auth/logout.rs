@@ -204,7 +204,7 @@ mod tests {
         // Arrange
         let m = MockSetup::new().await;
         let app = m.router();
-        let session_cookie = m.setup_authenticated_state().await;
+        let session_cookie = m.setup_authenticated_state_to_be_replaced().await;
 
         // Act
         let response = app
@@ -243,7 +243,7 @@ mod tests {
         // Arrange
         let m = MockSetup::new().await;
         let mut app = m.router();
-        let session_cookie = m.setup_authenticated_state().await;
+        let session_cookie = m.setup_authenticated_state_to_be_replaced().await;
         let app_uri = "http://logout.example.com".to_string();
 
         // Act
