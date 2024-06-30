@@ -1,8 +1,7 @@
-version: '3'
 services:
   ridser:
     # https://mcr.microsoft.com/v2/vscode/devcontainers/rust/tags/list
-    image: mcr.microsoft.com/devcontainers/rust:0-1-bullseye
+    image: mcr.microsoft.com/devcontainers/rust:1-1-bullseye
     ports:
       # Publish keycloak here, because network stack is shared
       - "8101:8101"
@@ -10,17 +9,15 @@ services:
       # Mount the root folder that contains .git
       - ..:/workspace:cached
     command: /bin/sh -c "while sleep 1000; do :; done"
-    environment:
-      - CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 
   redis:
-    image: redis:6.2.6-alpine
-  
+    image: redis:7-alpine
+
   echo:
     image: erikwegner/rsecho:release-1.0.0
 
   keycloak:
-    image: quay.io/keycloak/keycloak:21.0.2
+    image: quay.io/keycloak/keycloak:25.0.1
     command:
       - start-dev
       - --import-realm

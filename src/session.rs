@@ -83,4 +83,5 @@ pub(crate) async fn purge_store_and_regenerate_session(session: &Session, client
         let _: Result<(), _> = client.del::<_, String>(key).await;
     }
     let _: Result<(), _> = session.flush().await;
+    let _ = session.save().await;
 }

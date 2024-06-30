@@ -243,6 +243,7 @@ async fn proxy(
                 })?,
         );
     }
+    req.headers_mut().remove(HEADER_KEY_CSRF_TOKEN);
 
     Ok(client
         .request(req)

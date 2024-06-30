@@ -22,10 +22,6 @@ implement a _Backend for Frontend_ pattern.
 
 `RIDSER_DANGER_ACCEPT_INVALID_CERTS`: Accept any certificate when proxying requests.
 
-## Generate key
-
-    openssl genrsa -out local.pem 2048
-
 ## Reexport keycloak realm
 
 1. Enter running keycloak container:

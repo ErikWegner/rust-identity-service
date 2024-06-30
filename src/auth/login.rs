@@ -102,17 +102,19 @@ pub(crate) async fn login(
         })?;
     let auth_url = d.auth_url.as_str();
 
-    let _ = session.insert(
-        "ridser_logincallback_parameters",
-        LoginCallbackSessionParameters {
-            app_uri: login_query_params.app_uri.clone(),
-            nonce: d.nonce,
-            csrf_token: d.csrf_token,
-            pkce_verifier: d.pkce_verifier,
-            redirect_uri: login_query_params.redirect_uri.clone(),
-            scopes: login_query_params.scope.clone(),
-        },
-    );
+    let _ = session
+        .insert(
+            "ridser_logincallback_parameters",
+            LoginCallbackSessionParameters {
+                app_uri: login_query_params.app_uri.clone(),
+                nonce: d.nonce,
+                csrf_token: d.csrf_token,
+                pkce_verifier: d.pkce_verifier,
+                redirect_uri: login_query_params.redirect_uri.clone(),
+                scopes: login_query_params.scope.clone(),
+            },
+        )
+        .await;
 
     debug!("login redirecting to {}", auth_url);
     Ok(Redirect::to(auth_url).into_response())
