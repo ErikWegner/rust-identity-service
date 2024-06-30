@@ -190,8 +190,9 @@ mod tests {
 
     use axum::{body::Body, extract::FromRequestParts, http::HeaderValue, Router};
     use chrono::Utc;
+    use http_body_util::BodyExt;
     use hyper::{
-        header::{COOKIE, SET_COOKIE},
+        header::{COOKIE, LOCATION, SET_COOKIE},
         Request,
     };
     use once_cell::sync::Lazy;
@@ -207,7 +208,7 @@ mod tests {
         SubjectIdentifier, TokenUrl, UserInfoUrl,
     };
     use tower::{Service, ServiceExt};
-    use tower_sessions::{session::Id, Session, SessionManager};
+    use tower_sessions::{session::Id, Session};
     use tower_sessions_redis_store::{fred::clients::RedisPool, RedisStore};
     use tracing_subscriber::filter::EnvFilter;
     use wiremock::{
@@ -535,7 +536,7 @@ mod tests {
         pub async fn setup_authenticated_state(&self, app: &mut Router) -> String {
             // Call login to create a session
             let login_request = Request::builder()
-                .uri("/auth/login")
+                .uri("/auth/login?app_uri=http%3A%2F%2Fexample.com&redirect_uri=http%3A%2F%2Fexample.org%2F&scope=openid")
                 .body(Body::empty())
                 .unwrap();
             let login_response = ServiceExt::<Request<Body>>::ready(app)
@@ -544,6 +545,48 @@ mod tests {
                 .call(login_request)
                 .await
                 .unwrap();
+            // Assert redirect
+            assert_eq!(
+                303,
+                login_response.status().as_u16(),
+                "No redirect: {}",
+                String::from_utf8(
+                    login_response
+                        .into_body()
+                        .collect()
+                        .await
+                        .unwrap()
+                        .to_bytes()
+                        .to_vec()
+                )
+                .unwrap_or_else(|e| format!("utf8 error: {e}"))
+            );
+            let location = login_response
+                .headers()
+                .get(LOCATION)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
+            // Extract state from redirect uri
+            let state: String = location
+                .split('&')
+                .find(|s| s.starts_with("state"))
+                .expect("Redirect uri should have nonce")
+                .split('=')
+                .skip(1)
+                .take(1)
+                .collect();
+            // Extract nonce from redirect uri
+            let nonce: String = location
+                .split('&')
+                .find(|s| s.starts_with("nonce"))
+                .expect("Redirect uri should have nonce")
+                .split('=')
+                .skip(1)
+                .take(1)
+                .collect();
+
             // Extract session cookie
             let session_cookie = login_response
                 .headers()
@@ -557,9 +600,8 @@ mod tests {
 
             // prepare mock server for token exchange
             let code = random_alphanumeric_string(32);
-            let nonce = random_alphanumeric_string(18);
-            Mock::given(method("GET"))
-                .and(path("/token"))
+            Mock::given(method("POST"))
+                .and(path("/testing-issuer/token"))
                 .and(query_param("code", &code))
                 .respond_with(ResponseTemplate::new(200).set_body_raw(
                     oidc_token(&self.issuer_url, &self.client_id, &nonce),
@@ -570,7 +612,7 @@ mod tests {
 
             // Run callback request
             let callback_request = Request::builder()
-                .uri(format!("/auth/callback?code={}", &code))
+                .uri(format!("/auth/callback?code={code}&state={state}",))
                 .header(COOKIE, session_cookie)
                 .body(Body::empty())
                 .unwrap();
@@ -591,7 +633,21 @@ mod tests {
                 .find(|s| s.starts_with(&self.cookie_name))
                 .expect("Callback response should have a session cookie");
 
-            assert_eq!(callback_response.status(), 200);
+            assert_eq!(
+                callback_response.status(),
+                200,
+                "Response not ok: {}",
+                String::from_utf8(
+                    callback_response
+                        .into_body()
+                        .collect()
+                        .await
+                        .unwrap()
+                        .to_bytes()
+                        .to_vec()
+                )
+                .unwrap_or_else(|e| format!("utf8 error: {e}"))
+            );
 
             authenticated_cookie.to_string()
         }
