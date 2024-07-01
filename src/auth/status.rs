@@ -135,7 +135,12 @@ mod tests {
         let s: StatusResponse =
             serde_json::from_str(body.as_str()).expect("Body should deserialize");
         assert!(s.authenticated, "Should be authenticated");
+        assert!(s.expires_in.is_some(), "Should have expires_in value");
         assert!(s.expires_in.unwrap() > 2, "Should be greater 14 seconds");
+        assert!(
+            s.refresh_expires_in.is_some(),
+            "Should have refresh_expires_in value"
+        );
         assert!(
             s.refresh_expires_in.unwrap() > 498,
             "Should be greater 498 seconds"

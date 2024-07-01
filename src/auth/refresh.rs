@@ -125,8 +125,8 @@ mod tests {
     async fn test_refresh() {
         // Arrange
         let m = MockSetup::new().await;
-        let app = m.router();
-        let session_cookie = m.setup_authenticated_state_to_be_replaced().await;
+        let mut app = m.router();
+        let session_cookie = m.setup_authenticated_state(&mut app).await;
         m.setup_refresh_token_response("refresh nonce").await;
 
         // Act

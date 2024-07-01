@@ -189,12 +189,14 @@ mod tests {
     use std::{sync::Arc, time::SystemTime};
 
     use axum::{body::Body, extract::FromRequestParts, http::HeaderValue, Router};
+    use base64::prelude::*;
     use chrono::Utc;
     use http_body_util::BodyExt;
     use hyper::{
         header::{COOKIE, LOCATION, SET_COOKIE},
         Request,
     };
+    use oauth2::EmptyExtraTokenFields;
     use once_cell::sync::Lazy;
     use openidconnect::{
         core::{
@@ -203,16 +205,18 @@ mod tests {
             CoreRsaPrivateSigningKey, CoreSubjectIdentifierType, CoreTokenResponse, CoreTokenType,
         },
         AccessToken, Audience, AuthUrl, EmptyAdditionalClaims, EmptyAdditionalProviderMetadata,
-        EmptyExtraTokenFields, EndUserEmail, IdToken, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl,
-        Nonce, PrivateSigningKey, RefreshToken, ResponseTypes, Scope, StandardClaims,
-        SubjectIdentifier, TokenUrl, UserInfoUrl,
+        EndUserEmail, IdToken, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl, Nonce, PrivateSigningKey,
+        RefreshToken, ResponseTypes, Scope, StandardClaims, SubjectIdentifier, TokenUrl,
+        UserInfoUrl,
     };
+    use serde_json::json;
     use tower::{Service, ServiceExt};
     use tower_sessions::{session::Id, Session};
     use tower_sessions_redis_store::{fred::clients::RedisPool, RedisStore};
+    use tracing_log::LogTracer;
     use tracing_subscriber::filter::EnvFilter;
     use wiremock::{
-        matchers::{method, path, query_param},
+        matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
     };
 
@@ -234,6 +238,7 @@ mod tests {
                     .from_env_lossy(),
             )
             .init();
+        let _ = LogTracer::init();
         Arc::new(true)
     });
 
@@ -393,11 +398,19 @@ mod tests {
 
         let id_token = id_token(issuer, client_id, nonce, &access_token);
 
-        let token_response = CoreTokenResponse::new(
+        let mut token_response = CoreTokenResponse::new(
             access_token,
             CoreTokenType::Bearer,
             CoreIdTokenFields::new(Some(id_token), EmptyExtraTokenFields {}),
         );
+        let exp = Utc::now() + chrono::Duration::seconds(600);
+        let exp_timestamp = exp.timestamp();
+        let refresh_token = json!({"exp": exp_timestamp}).to_string();
+        let refresh_token = format!("A.{}.S", BASE64_STANDARD.encode(refresh_token));
+        let refresh_token = RefreshToken::new(refresh_token);
+        let d = core::time::Duration::from_secs(13);
+        token_response.set_expires_in(Some(&d));
+        token_response.set_refresh_token(Some(refresh_token));
         serde_json::to_string(&token_response).expect("Serialize token response")
     }
 
@@ -408,7 +421,6 @@ mod tests {
         mock_server: MockServer,
         oidc_client: OIDCClient,
         redis_pool: RedisPool,
-        session_secret: String,
         session_layer: RidserSessionLayer,
         session_store: RedisStore<RedisPool>,
     }
@@ -468,7 +480,6 @@ mod tests {
                 redis_pool,
                 oidc_client,
                 session_layer,
-                session_secret,
                 session_store,
             }
         }
@@ -602,7 +613,6 @@ mod tests {
             let code = random_alphanumeric_string(32);
             Mock::given(method("POST"))
                 .and(path("/testing-issuer/token"))
-                .and(query_param("code", &code))
                 .respond_with(ResponseTemplate::new(200).set_body_raw(
                     oidc_token(&self.issuer_url, &self.client_id, &nonce),
                     "application/json",
@@ -635,7 +645,7 @@ mod tests {
 
             assert_eq!(
                 callback_response.status(),
-                200,
+                303,
                 "Response not ok: {}",
                 String::from_utf8(
                     callback_response
@@ -677,13 +687,8 @@ mod tests {
             let mut ws = Session::from_request_parts(&mut request_parts, &state)
                 .await
                 .unwrap();
-            callback_post_token_exchange(
-                &mut ws,
-                self.redis_pool.clone(),
-                jwt,
-                "testbot".to_string(),
-            )
-            .await;
+            callback_post_token_exchange(&ws, self.redis_pool.clone(), jwt, "testbot".to_string())
+                .await;
             String::new()
         }
     }
