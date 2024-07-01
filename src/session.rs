@@ -7,7 +7,7 @@ use tower_sessions_redis_store::{
     fred::{
         clients::{RedisClient, RedisPool},
         interfaces::{ClientLike, KeysInterface},
-        types::{PerformanceConfig, ReconnectPolicy, RedisConfig, Server, ServerConfig},
+        types::{PerformanceConfig, ReconnectPolicy, RedisConfig},
     },
     RedisStore,
 };

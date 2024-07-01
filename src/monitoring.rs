@@ -5,7 +5,7 @@ use axum::{
     Extension, Router,
 };
 use tower_sessions_redis_store::fred::{clients::RedisPool, interfaces::ClientLike};
-use tracing::{error, warn};
+use tracing::error;
 
 async fn health_check(Extension(pool): Extension<RedisPool>) -> Response {
     let client = pool.next_connected();
@@ -57,14 +57,8 @@ mod tests {
 
         let connect_pool = redis_pool.clone();
 
-        if (timeout(
-            core::time::Duration::from_secs(1),
-            connect_pool.wait_for_connect(),
-        )
-        .await)
-            .is_err()
-        {
-            warn!("Failed to connect to redis");
+        if (timeout(core::time::Duration::from_secs(1), connect_pool.connect()).await).is_err() {
+            tracing::warn!("Failed to connect to redis");
         }
 
         redis_pool
