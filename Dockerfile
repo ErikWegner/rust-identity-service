@@ -1,6 +1,6 @@
 ## Build stage
 ## Build mimalloc
-FROM alpine as mimallocbuilder
+FROM alpine:3.18 as mimallocbuilder
 RUN apk add git build-base cmake linux-headers
 RUN cd /; git clone --depth 1 https://github.com/microsoft/mimalloc; cd mimalloc; mkdir build; cd build; cmake ..; make -j$(nproc); make install
 
@@ -21,13 +21,13 @@ RUN cargo build --target x86_64-unknown-linux-musl --release
 RUN strip -s /usr/src/ridser/target/x86_64-unknown-linux-musl/release/ridser
 
 ## Put together final image
-FROM alpine:3.17 AS runtime
+FROM alpine:3.18 AS runtime
 COPY --from=mimallocbuilder /mimalloc/build/*.so.* /lib/
 RUN ln -s /lib/libmimalloc.so.2.1 /lib/libmimalloc.so
 ENV LD_PRELOAD=/lib/libmimalloc.so
 ENV MIMALLOC_LARGE_OS_PAGES=1
-COPY --from=builder /usr/src/ridser/target/x86_64-unknown-linux-musl/release/ridser .
+COPY --from=builder /usr/src/ridser/target/x86_64-unknown-linux-musl/release/ridser /
 EXPOSE 3000
 VOLUME ["/files"]
 USER 65534
-CMD ["./ridser"]
+CMD ["/ridser"]

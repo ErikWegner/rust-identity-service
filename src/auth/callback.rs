@@ -5,10 +5,10 @@ use axum::{
     Extension,
 };
 use axum_macros::debug_handler;
-use axum_sessions::extractors::WritableSession;
-use redis::Client;
 use serde::Deserialize;
-use tracing::info;
+use tower_sessions::Session;
+use tower_sessions_redis_store::fred::clients::RedisPool;
+use tracing::{error, info};
 
 use crate::{
     auth::{LoginCallbackSessionParameters, OIDCClient},
@@ -35,30 +35,36 @@ pub(crate) struct TokenExchangeData {
 }
 
 pub(super) async fn callback_post_token_exchange(
-    session: &mut WritableSession,
-    client: &Client,
+    session: &Session,
+    pool: RedisPool,
     jwt: SessionTokens,
     userid: String,
 ) {
-    purge_store_and_regenerate_session(session, client).await;
+    purge_store_and_regenerate_session(session, pool.next()).await;
 
-    let _ = session.insert(SESSION_KEY_JWT, jwt);
-    let _ = session.insert(SESSION_KEY_CSRF_TOKEN, random_alphanumeric_string(24));
-    let _ = session.insert(SESSION_KEY_USERID, userid);
+    let _ = session.insert(SESSION_KEY_JWT, jwt).await;
+    let _ = session
+        .insert(SESSION_KEY_CSRF_TOKEN, random_alphanumeric_string(24))
+        .await;
+    let _ = session.insert(SESSION_KEY_USERID, userid).await;
 }
 
 #[debug_handler]
 pub(crate) async fn callback(
     Extension(oidc_client): Extension<OIDCClient>,
-    Extension(client): Extension<Client>,
-    mut session: WritableSession,
+    Extension(client): Extension<RedisPool>,
+    session: Session,
     callback_query_params: Query<CallbackQueryParams>,
 ) -> Result<Response, Response> {
     let login_callback_session_params = session
         .get::<LoginCallbackSessionParameters>("ridser_logincallback_parameters")
+        .await
+        .map_err(|redis_err| {
+            error!("Reading redis error in callback: {:?}", redis_err);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Invalid session").into_response()
+        })?
         .ok_or_else(|| (StatusCode::BAD_REQUEST, "Invalid session").into_response())?;
-    session.remove("ridser_logincallback_parameters");
-
+    let _: Result<Option<()>, _> = session.remove("ridser_logincallback_parameters").await;
     if callback_query_params.state != login_callback_session_params.csrf_token {
         return Err((StatusCode::BAD_REQUEST, "Invalid request").into_response());
     }
@@ -76,7 +82,7 @@ pub(crate) async fn callback(
             (StatusCode::UNAUTHORIZED, "Login failure").into_response()
         })?;
 
-    callback_post_token_exchange(&mut session, &client, jwt, userid).await;
+    callback_post_token_exchange(&session, client, jwt, userid).await;
 
     Ok(Redirect::to(&login_callback_session_params.app_uri).into_response())
 }
@@ -92,6 +98,7 @@ mod tests {
             Request,
         },
     };
+    use http_body_util::BodyExt; // for `collect`
     use hyper::Uri;
     use tower::{Service, ServiceExt};
 
@@ -108,7 +115,12 @@ mod tests {
 
         // Act
         let request = Request::builder().uri("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid".to_string()).body(Body::empty()).unwrap();
-        let response1 = app.ready().await.unwrap().call(request).await.unwrap();
+        let response1 = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .unwrap();
         let cookie1 = response1.headers().get(SET_COOKIE).unwrap();
         let redirect_uri1 = response1.headers().get(LOCATION).unwrap();
         let uri = Uri::from_str(redirect_uri1.to_str().unwrap()).unwrap();
@@ -130,13 +142,21 @@ mod tests {
             .header(COOKIE, cookie1.clone())
             .body(Body::empty())
             .unwrap();
-        let response2 = app.ready().await.unwrap().call(request).await.unwrap();
+        let response2 = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .unwrap();
         let status2 = response2.status();
         let headers2 = response2.headers().clone();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response2.into_body())
+            response2
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();

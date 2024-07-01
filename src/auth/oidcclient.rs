@@ -4,14 +4,13 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use axum_sessions::async_session::base64;
-use oauth2::basic::BasicTokenType;
+use base64::{prelude::BASE64_STANDARD, Engine};
+use oauth2::{basic::BasicTokenType, HttpRequest, HttpResponse};
 use openidconnect::{
     core::{
         CoreAuthenticationFlow, CoreClient, CoreGenderClaim, CoreJsonWebKeyType,
         CoreJweContentEncryptionAlgorithm, CoreJwsSigningAlgorithm, CoreProviderMetadata,
     },
-    reqwest::async_http_client,
     AccessTokenHash, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
     EmptyAdditionalClaims, EmptyExtraTokenFields, IdTokenFields, IssuerUrl, Nonce,
     OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope,
@@ -43,6 +42,8 @@ pub(crate) struct AuthorizeRequestData {
     pub(crate) redirect_uri: String,
     pub(crate) state: String,
     pub(crate) scope: String,
+    pub(crate) prompt: Option<String>,
+    pub(crate) ui_locales: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +53,7 @@ pub struct OIDCClient {
 
 fn jwt_exp(jwt: &str) -> Result<u64> {
     let payload = jwt.split('.').nth(1).unwrap_or_default();
-    let payload = base64::decode(payload)?;
+    let payload = BASE64_STANDARD.decode(payload)?;
     let payload = String::from_utf8(payload)?;
     let jwtdecoded: ExpFieldInJWT = serde_json::from_str(payload.as_str())?;
     Ok(jwtdecoded.exp)
@@ -89,6 +90,53 @@ fn token_response_to_session_tokens(
     ))
 }
 
+async fn async_insecure_http_client(
+    request: HttpRequest,
+) -> Result<HttpResponse, oauth2::reqwest::Error<reqwest::Error>> {
+    let client = {
+        let danger_accept_invalid_certs = std::env::var("RIDSER_DANGER_ACCEPT_INVALID_CERTS")
+            .unwrap_or_default()
+            .to_lowercase()
+            == "true";
+        let builder =
+            reqwest::Client::builder().danger_accept_invalid_certs(danger_accept_invalid_certs);
+
+        // Following redirects opens the client up to SSRF vulnerabilities.
+        // but this is not possible to prevent on wasm targets
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.redirect(reqwest::redirect::Policy::none());
+
+        builder.build().map_err(oauth2::reqwest::Error::Reqwest)?
+    };
+
+    let mut request_builder = client
+        .request(request.method, request.url.as_str())
+        .body(request.body);
+    for (name, value) in &request.headers {
+        request_builder = request_builder.header(name.as_str(), value.as_bytes());
+    }
+    let request = request_builder
+        .build()
+        .map_err(oauth2::reqwest::Error::Reqwest)?;
+
+    let response = client
+        .execute(request)
+        .await
+        .map_err(oauth2::reqwest::Error::Reqwest)?;
+
+    let status_code = response.status();
+    let headers = response.headers().to_owned();
+    let chunks = response
+        .bytes()
+        .await
+        .map_err(oauth2::reqwest::Error::Reqwest)?;
+    Ok(HttpResponse {
+        status_code,
+        headers,
+        body: chunks.to_vec(),
+    })
+}
+
 impl OIDCClient {
     pub(crate) async fn build(
         issuer_url: &str,
@@ -99,7 +147,7 @@ impl OIDCClient {
         debug!("🔎 Loading discovery document from {}", issuer_url);
         let mut provider_metadata = CoreProviderMetadata::discover_async(
             IssuerUrl::new(issuer_url.to_string())?,
-            async_http_client,
+            async_insecure_http_client,
         )
         .await
         .with_context(|| format!("Loading issuer data from {issuer_url}"))?;
@@ -135,7 +183,7 @@ impl OIDCClient {
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
         // Generate the full authorization URL.
-        let (auth_url, csrf_token, nonce) = self
+        let mut b = self
             .client
             .authorize_url(
                 CoreAuthenticationFlow::AuthorizationCode,
@@ -148,8 +196,17 @@ impl OIDCClient {
             .set_pkce_challenge(pkce_challenge)
             .set_redirect_uri(Cow::Owned(RedirectUrl::new(
                 authorize_request.redirect_uri,
-            )?))
-            .url();
+            )?));
+        if let Some(prompt) = authorize_request.prompt {
+            if prompt == "none" {
+                b = b.add_prompt(openidconnect::core::CoreAuthPrompt::None);
+            }
+        }
+        if let Some(ui_locale) = authorize_request.ui_locales {
+            b = b.add_ui_locale(openidconnect::LanguageTag::new(ui_locale));
+        }
+
+        let (auth_url, csrf_token, nonce) = b.url();
 
         Ok(AuthorizeData::new(
             auth_url,
@@ -169,7 +226,7 @@ impl OIDCClient {
             .set_redirect_uri(Cow::Owned(RedirectUrl::new(data.redirect_uri.to_string())?))
             // Set the PKCE code verifier.
             .set_pkce_verifier(PkceCodeVerifier::new(data.pkce_verifier))
-            .request_async(async_http_client)
+            .request_async(async_insecure_http_client)
             .await
             .map_err(|e| {
                 match e {
@@ -214,7 +271,7 @@ impl OIDCClient {
     pub(crate) async fn refresh_token(&self, refresh_token: &str) -> Result<SessionTokens> {
         self.client
             .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
-            .request_async(async_http_client)
+            .request_async(async_insecure_http_client)
             .await
             .map_err(|tokenerror| {
                 match tokenerror {

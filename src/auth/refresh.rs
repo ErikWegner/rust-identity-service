@@ -7,7 +7,7 @@ use axum::{
     Extension,
 };
 use axum_macros::debug_handler;
-use axum_sessions::extractors::WritableSession;
+use tower_sessions::Session;
 use tracing::debug;
 
 use crate::{
@@ -52,21 +52,29 @@ impl RefreshLockManager {
 pub(crate) async fn refresh(
     Extension(refresh_lock): Extension<RefreshLockManager>,
     Extension(client): Extension<OIDCClient>,
-    mut session: WritableSession,
+    session: Session,
 ) -> Result<Response, Response> {
-    let userid = session.get::<String>(SESSION_KEY_USERID).ok_or_else(|| {
-        debug!("No user id in session");
-        (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
-    })?;
+    let userid = session
+        .get::<String>(SESSION_KEY_USERID)
+        .await
+        .unwrap_or(None)
+        .ok_or_else(|| {
+            debug!("No user id in session");
+            (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+        })?;
 
     if refresh_lock.user_is_refreshing(&userid) {
         return Err((StatusCode::CONFLICT, "Refresh pending...").into_response());
     }
 
-    let session_tokens: SessionTokens = session.get(SESSION_KEY_JWT).ok_or_else(|| {
-        debug!("No tokens in session");
-        (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
-    })?;
+    let session_tokens: SessionTokens = session
+        .get(SESSION_KEY_JWT)
+        .await
+        .unwrap_or(None)
+        .ok_or_else(|| {
+            debug!("No tokens in session");
+            (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+        })?;
 
     if session_tokens.ttl_gt(refresh_lock.remaining_secs_threshold) {
         return Err((StatusCode::BAD_REQUEST, "Refresh too early".to_string()).into_response());
@@ -83,7 +91,7 @@ pub(crate) async fn refresh(
         let jwt = client.refresh_token(refresh_token.as_str()).await;
         let response = match jwt {
             Ok(jwt) => {
-                let _ = session.insert(SESSION_KEY_JWT, jwt);
+                let _ = session.insert(SESSION_KEY_JWT, jwt).await;
                 (StatusCode::OK, "Refresh successful".to_string()).into_response()
             }
             Err(e) => {
@@ -108,6 +116,7 @@ pub(crate) async fn refresh(
 #[cfg(test)]
 mod tests {
     use axum::{body::Body, http::header::COOKIE, http::Request, http::StatusCode};
+    use http_body_util::BodyExt;
     use tower::ServiceExt;
 
     use crate::auth::tests::MockSetup;
@@ -116,8 +125,8 @@ mod tests {
     async fn test_refresh() {
         // Arrange
         let m = MockSetup::new().await;
-        let app = m.router();
-        let session_cookie = m.setup_authenticated_state().await;
+        let mut app = m.router();
+        let session_cookie = m.setup_authenticated_state(&mut app).await;
         m.setup_refresh_token_response("refresh nonce").await;
 
         // Act
@@ -134,9 +143,12 @@ mod tests {
             .unwrap();
         let status = response.status();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();

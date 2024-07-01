@@ -35,8 +35,13 @@
                     "kind": "bin"
                 }
             },
-            "args": [],
-            "cwd": "${workspaceFolder}"
+            "args": [
+                "auth::status::tests::test_handles_authenticated_state"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "RIDSER_REDIS_TEST_URL": "localhost:6379"
+            }
         }
     ]
 }

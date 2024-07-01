@@ -6,9 +6,9 @@ use axum::{
     Extension,
 };
 use axum_macros::debug_handler;
-use axum_sessions::extractors::WritableSession;
-use redis::Client;
 use serde::Deserialize;
+use tower_sessions::Session;
+use tower_sessions_redis_store::fred::clients::RedisPool;
 use tracing::{debug, error, trace};
 
 use crate::{
@@ -29,6 +29,10 @@ pub(crate) struct LoginQueryParams {
     redirect_uri: String,
     #[serde(rename = "scope")]
     scope: String,
+    #[serde(rename = "ui_locales")]
+    ui_locales: Option<String>,
+    #[serde(rename = "prompt")]
+    prompt: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -73,40 +77,44 @@ impl LoginAppSettings {
 pub(crate) async fn login(
     State(login_app_settings): State<LoginAppSettings>,
     Extension(oidc_client): Extension<OIDCClient>,
-    Extension(client): Extension<Client>,
-    mut session: WritableSession,
+    Extension(client): Extension<RedisPool>,
+    session: Session,
     login_query_params: Query<LoginQueryParams>,
 ) -> Result<Response, Response> {
     if !login_app_settings.is_app_uri_allowed(login_query_params.app_uri.as_str()) {
         debug!("app_uri {} is not allowed", login_query_params.app_uri);
         return Err((StatusCode::BAD_REQUEST, "Invalid app_uri").into_response());
     }
-    purge_store_and_regenerate_session(&mut session, &client).await;
+    purge_store_and_regenerate_session(&session, client.next()).await;
     let state: String = random_alphanumeric_string(20);
     let d = oidc_client
         .authorize_data(AuthorizeRequestData {
             redirect_uri: login_query_params.redirect_uri.clone(),
             scope: login_query_params.scope.clone(),
             state,
+            ui_locales: login_query_params.ui_locales.clone(),
+            prompt: login_query_params.prompt.clone(),
         })
         .await
         .map_err(|e| {
-            error!("Failed to build authoriaztion url {:?}", e);
+            error!("Failed to build authorization url {:?}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, "Server failure").into_response()
         })?;
     let auth_url = d.auth_url.as_str();
 
-    let _ = session.insert(
-        "ridser_logincallback_parameters",
-        LoginCallbackSessionParameters {
-            app_uri: login_query_params.app_uri.clone(),
-            nonce: d.nonce,
-            csrf_token: d.csrf_token,
-            pkce_verifier: d.pkce_verifier,
-            redirect_uri: login_query_params.redirect_uri.clone(),
-            scopes: login_query_params.scope.clone(),
-        },
-    );
+    let _ = session
+        .insert(
+            "ridser_logincallback_parameters",
+            LoginCallbackSessionParameters {
+                app_uri: login_query_params.app_uri.clone(),
+                nonce: d.nonce,
+                csrf_token: d.csrf_token,
+                pkce_verifier: d.pkce_verifier,
+                redirect_uri: login_query_params.redirect_uri.clone(),
+                scopes: login_query_params.scope.clone(),
+            },
+        )
+        .await;
 
     debug!("login redirecting to {}", auth_url);
     Ok(Redirect::to(auth_url).into_response())
@@ -117,10 +125,11 @@ mod tests {
     use axum::{
         body::Body,
         http::{
-            header::{COOKIE, SET_COOKIE},
+            header::{COOKIE, LOCATION, SET_COOKIE},
             Request,
         },
     };
+    use http_body_util::BodyExt;
     use tower::{Service, ServiceExt};
 
     use crate::auth::tests::MockSetup;
@@ -145,9 +154,12 @@ mod tests {
             .unwrap();
         let status = response.status();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();
@@ -171,7 +183,12 @@ mod tests {
 
         // Act
         let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
-        let response1 = app.ready().await.unwrap().call(request).await.unwrap();
+        let response1 = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .unwrap();
         let status1 = response1.status();
         let cookie1 = response1.headers().get(SET_COOKIE).unwrap();
 
@@ -180,7 +197,12 @@ mod tests {
             .header(COOKIE, cookie1.clone())
             .body(Body::empty())
             .unwrap();
-        let response2 = app.ready().await.unwrap().call(request).await.unwrap();
+        let response2 = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .unwrap();
         let status2 = response2.status();
         let cookie2 = response2.headers().get(SET_COOKIE).unwrap();
 
@@ -222,8 +244,7 @@ mod tests {
 
         for app_uri in urilist {
             // Act
-            let response = app
-            .ready().await.unwrap().call(
+            let response = ServiceExt::<Request<Body>>::ready(&mut app).await.unwrap().call(
                 Request::builder()
                     .uri(format!("/auth/login?app_uri={app_uri}&redirect_uri=http://example.com&scope=openid&state=xyz"))
                     .body(Body::empty())
@@ -233,9 +254,12 @@ mod tests {
             .unwrap();
             let status = response.status();
             let body = String::from_utf8(
-                hyper::body::to_bytes(response.into_body())
+                response
+                    .into_body()
+                    .collect()
                     .await
-                    .unwrap()
+                    .expect("collect")
+                    .to_bytes()
                     .to_vec(),
             )
             .unwrap();
@@ -268,8 +292,7 @@ mod tests {
 
         for app_uri in urilist {
             // Act
-            let response = app
-            .ready().await.unwrap().call(
+            let response = ServiceExt::<Request<Body>>::ready(&mut app).await.unwrap().call(
                 Request::builder()
                     .uri(format!("/auth/login?app_uri={app_uri}&redirect_uri=http://example.com&scope=openid&state=xyz"))
                     .body(Body::empty())
@@ -279,9 +302,12 @@ mod tests {
             .unwrap();
             let status = response.status();
             let body = String::from_utf8(
-                hyper::body::to_bytes(response.into_body())
+                response
+                    .into_body()
+                    .collect()
                     .await
-                    .unwrap()
+                    .expect("collect")
+                    .to_bytes()
                     .to_vec(),
             )
             .unwrap();
@@ -294,5 +320,73 @@ mod tests {
                 body
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_login_sends_redirect_with_ui_locales() {
+        // Arrange
+        let m = MockSetup::new().await;
+        let app = m.router();
+
+        // Act
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid&state=xyz&ui_locales=de")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let url = response
+            .headers()
+            .get(LOCATION)
+            .expect("header value")
+            .to_str()
+            .expect("to str")
+            .split('?')
+            .last()
+            .expect("last");
+
+        // Assert
+        assert!(
+            url.contains("ui_locales=de"),
+            "url should contain ui_locales: {}",
+            url
+        );
+    }
+
+    #[tokio::test]
+    async fn test_login_sends_redirect_with_prompt_none() {
+        // Arrange
+        let m = MockSetup::new().await;
+        let app = m.router();
+
+        // Act
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid&state=xyz&prompt=none")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let url = response
+            .headers()
+            .get(LOCATION)
+            .expect("header value")
+            .to_str()
+            .expect("to str")
+            .split('?')
+            .last()
+            .expect("last");
+
+        // Assert
+        assert!(
+            url.contains("prompt=none"),
+            "url should contain prompt: {}",
+            url
+        );
     }
 }

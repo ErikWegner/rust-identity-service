@@ -4,8 +4,8 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use axum_macros::debug_handler;
-use axum_sessions::extractors::WritableSession;
 use serde::Deserialize;
+use tower_sessions::Session;
 use tracing::{trace, warn};
 
 use crate::session::SESSION_KEY_JWT;
@@ -47,15 +47,17 @@ impl LogoutAppSettings {
 #[debug_handler]
 pub(crate) async fn logout(
     State(logout_app_settings): State<LogoutAppSettings>,
-    mut session: WritableSession,
+    session: Session,
     logout_query_params: Query<LogoutQueryParams>,
 ) -> Response {
     if !logout_app_settings.is_app_uri_allowed(&logout_query_params.app_uri) {
         return (StatusCode::BAD_REQUEST, "Invalid app_uri").into_response();
     }
-    let _ = session.insert("ridser_logout_app_uri", logout_query_params.app_uri.clone());
+    let _ = session
+        .insert("ridser_logout_app_uri", logout_query_params.app_uri.clone())
+        .await;
     let logout_uri = logout_app_settings.logout_uri;
-    let session_tokens: Option<SessionTokens> = session.get(SESSION_KEY_JWT);
+    let session_tokens: Option<SessionTokens> = session.get(SESSION_KEY_JWT).await.unwrap_or(None);
     let id_token = session_tokens.map(|st| st.id_token).unwrap_or_default();
     let post_logout_redirect_uri = logout_query_params.redirect_uri.clone();
     let uri = format!(
@@ -66,15 +68,17 @@ pub(crate) async fn logout(
 }
 
 #[debug_handler]
-pub(crate) async fn logout_callback(mut session: WritableSession) -> Response {
+pub(crate) async fn logout_callback(session: Session) -> Response {
     let app_uri = session
         .get::<String>("ridser_logout_app_uri")
+        .await
+        .unwrap_or_default()
         .unwrap_or_else(|| {
             warn!("ridser_logout_app_uri not found in session");
             "/".to_string()
         });
 
-    session.destroy();
+    let _: Result<(), _> = session.flush().await;
     Redirect::to(&app_uri).into_response()
 }
 
@@ -87,6 +91,7 @@ mod tests {
             Request, StatusCode,
         },
     };
+    use http_body_util::BodyExt;
     use tower::{Service, ServiceExt};
 
     use crate::auth::tests::MockSetup;
@@ -103,8 +108,7 @@ mod tests {
 
         for app_uri in urilist {
             // Act
-            let response = app
-                .ready()
+            let response = ServiceExt::<Request<Body>>::ready(&mut app)
                 .await
                 .unwrap()
                 .call(
@@ -119,9 +123,12 @@ mod tests {
                 .unwrap();
             let status = response.status();
             let body = String::from_utf8(
-                hyper::body::to_bytes(response.into_body())
+                response
+                    .into_body()
+                    .collect()
                     .await
-                    .unwrap()
+                    .expect("collect")
+                    .to_bytes()
                     .to_vec(),
             )
             .unwrap();
@@ -158,8 +165,7 @@ mod tests {
 
         for app_uri in urilist {
             // Act
-            let response = app
-                .ready()
+            let response = ServiceExt::<Request<Body>>::ready(&mut app)
                 .await
                 .unwrap()
                 .call(
@@ -174,9 +180,12 @@ mod tests {
                 .unwrap();
             let status = response.status();
             let body = String::from_utf8(
-                hyper::body::to_bytes(response.into_body())
+                response
+                    .into_body()
+                    .collect()
                     .await
-                    .unwrap()
+                    .expect("collect")
+                    .to_bytes()
                     .to_vec(),
             )
             .unwrap();
@@ -196,8 +205,8 @@ mod tests {
     async fn test_handles_authenticated_state() {
         // Arrange
         let m = MockSetup::new().await;
-        let app = m.router();
-        let session_cookie = m.setup_authenticated_state().await;
+        let mut app = m.router();
+        let session_cookie = m.setup_authenticated_state(&mut app).await;
 
         // Act
         let response = app
@@ -212,9 +221,12 @@ mod tests {
             .unwrap();
         let status = response.status();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();
@@ -233,12 +245,11 @@ mod tests {
         // Arrange
         let m = MockSetup::new().await;
         let mut app = m.router();
-        let session_cookie = m.setup_authenticated_state().await;
+        let session_cookie = m.setup_authenticated_state(&mut app).await;
         let app_uri = "http://logout.example.com".to_string();
 
         // Act
-        let _response_logout1 = app
-            .ready()
+        let _response_logout1 = ServiceExt::<Request<Body>>::ready(&mut app)
             .await
             .unwrap()
             .call(
@@ -252,13 +263,12 @@ mod tests {
             )
             .await
             .unwrap();
-        let response = app
-            .ready()
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
             .await
             .unwrap()
             .call(
                 Request::builder()
-                    .uri(format!("/auth/logoutcallback"))
+                    .uri("/auth/logoutcallback".to_string())
                     .header(COOKIE, session_cookie)
                     .body(Body::empty())
                     .unwrap(),
@@ -277,9 +287,12 @@ mod tests {
             .map(|hv| hv.to_str().unwrap().to_string())
             .unwrap_or_default();
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
-                .unwrap()
+                .expect("collect")
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();

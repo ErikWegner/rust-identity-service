@@ -22,9 +22,9 @@ use axum::{
 use openidconnect::{
     core::CoreIdToken, url::Url, AccessToken, CsrfToken, Nonce, PkceCodeVerifier, RefreshToken,
 };
-use redis::Client;
 use serde::{Deserialize, Serialize};
 use tower::ServiceBuilder;
+use tower_sessions_redis_store::fred::clients::RedisPool;
 
 use crate::session::RidserSessionLayer;
 
@@ -139,7 +139,7 @@ impl FromRef<AppConfigurationState> for LogoutAppSettings {
 pub(crate) fn auth_routes(
     oidc_client: OIDCClient,
     session_layer: &RidserSessionLayer,
-    client: &Client,
+    client: RedisPool,
     remaining_secs_threshold: u64,
     app_config: AppConfigurationState,
 ) -> Router {
@@ -186,21 +186,17 @@ pub(crate) fn random_alphanumeric_string(length: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::SystemTime};
+    use std::sync::Arc;
 
-    use axum::{extract::FromRequestParts, http::HeaderValue, Router};
-    use axum_sessions::{
-        async_session::{
-            base64,
-            chrono::Utc,
-            hmac::{Hmac, Mac, NewMac},
-            sha2::Sha256,
-            Session, SessionStore,
-        },
-        extractors::WritableSession,
-        SessionHandle,
+    use axum::{body::Body, http::HeaderValue, Router};
+    use base64::prelude::*;
+    use chrono::Utc;
+    use http_body_util::BodyExt;
+    use hyper::{
+        header::{COOKIE, LOCATION, SET_COOKIE},
+        Request,
     };
-    use hyper::Request;
+    use oauth2::EmptyExtraTokenFields;
     use once_cell::sync::Lazy;
     use openidconnect::{
         core::{
@@ -209,24 +205,26 @@ mod tests {
             CoreRsaPrivateSigningKey, CoreSubjectIdentifierType, CoreTokenResponse, CoreTokenType,
         },
         AccessToken, Audience, AuthUrl, EmptyAdditionalClaims, EmptyAdditionalProviderMetadata,
-        EmptyExtraTokenFields, EndUserEmail, IdToken, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl,
-        Nonce, PrivateSigningKey, RefreshToken, ResponseTypes, Scope, StandardClaims,
-        SubjectIdentifier, TokenUrl, UserInfoUrl,
+        EndUserEmail, IdToken, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl, Nonce, PrivateSigningKey,
+        RefreshToken, ResponseTypes, Scope, StandardClaims, SubjectIdentifier, TokenUrl,
+        UserInfoUrl,
     };
+    use serde_json::json;
+    use tower::{Service, ServiceExt};
+    use tower_sessions_redis_store::fred::clients::RedisPool;
+    use tracing_log::LogTracer;
     use tracing_subscriber::filter::EnvFilter;
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
     };
 
-    use crate::session::{redis_cons, SessionSetup};
+    use crate::session::{redis_cons, RidserSessionLayer, SessionSetup};
 
     use super::{
         auth_routes,
-        callback::callback_post_token_exchange,
         logout::{LogoutAppSettings, LogoutBehavior},
         random_alphanumeric_string, AppConfigurationState, LoginAppSettings, OIDCClient,
-        SessionTokens,
     };
 
     static GLOBAL_LOGGER_SETUP: Lazy<Arc<bool>> = Lazy::new(|| {
@@ -237,6 +235,7 @@ mod tests {
                     .from_env_lossy(),
             )
             .init();
+        let _ = LogTracer::init();
         Arc::new(true)
     });
 
@@ -396,11 +395,19 @@ mod tests {
 
         let id_token = id_token(issuer, client_id, nonce, &access_token);
 
-        let token_response = CoreTokenResponse::new(
+        let mut token_response = CoreTokenResponse::new(
             access_token,
             CoreTokenType::Bearer,
             CoreIdTokenFields::new(Some(id_token), EmptyExtraTokenFields {}),
         );
+        let exp = Utc::now() + chrono::Duration::seconds(600);
+        let exp_timestamp = exp.timestamp();
+        let refresh_token = json!({"exp": exp_timestamp}).to_string();
+        let refresh_token = format!("A.{}.S", BASE64_STANDARD.encode(refresh_token));
+        let refresh_token = RefreshToken::new(refresh_token);
+        let d = core::time::Duration::from_secs(13);
+        token_response.set_expires_in(Some(&d));
+        token_response.set_refresh_token(Some(refresh_token));
         serde_json::to_string(&token_response).expect("Serialize token response")
     }
 
@@ -410,10 +417,8 @@ mod tests {
         issuer_url: String,
         mock_server: MockServer,
         oidc_client: OIDCClient,
-        redis_client: redis::Client,
-        session_layer: axum_sessions::SessionLayer<async_redis_session::RedisSessionStore>,
-        session_secret: String,
-        session_store: async_redis_session::RedisSessionStore,
+        redis_pool: RedisPool,
+        session_layer: RidserSessionLayer,
     }
 
     impl MockSetup {
@@ -446,13 +451,18 @@ mod tests {
                     .expect("OIDCClient creation failed");
 
             let session_secret: String = random_alphanumeric_string(64);
-            let (session_store, redis_client) =
-                redis_cons("redis://redis/").expect("Redis setup failed");
+            let (session_store, redis_pool) = redis_cons(
+                std::env::var("RIDSER_TEST_REDIS_URL")
+                    .unwrap_or_else(|_| "redis://redis:6379/".to_string())
+                    .as_ref(),
+            )
+            .await
+            .expect("Redis setup failed");
             let session_setup = SessionSetup {
                 secret: session_secret.clone(),
                 cookie_name: cookie_name.clone(),
                 cookie_path: "/".to_string(),
-                ttl: Some(std::time::Duration::from_secs(300)),
+                ttl: Some(time::Duration::new(300, 0)),
             };
             let session_layer = session_setup
                 .get_session_layer(session_store.clone())
@@ -463,16 +473,14 @@ mod tests {
                 client_id,
                 issuer_url,
                 mock_server,
-                redis_client,
+                redis_pool,
                 oidc_client,
                 session_layer,
-                session_secret,
-                session_store,
             }
         }
 
         pub fn router(&self) -> Router {
-            let redis_client = self.redis_client.clone();
+            let redis_pool = self.redis_pool.clone();
             let app_config = AppConfigurationState {
                 login_app_settings: LoginAppSettings::new(vec![
                     "http://example.com".to_string(),
@@ -492,7 +500,7 @@ mod tests {
                 auth_routes(
                     self.oidc_client.clone(),
                     &self.session_layer,
-                    &redis_client,
+                    redis_pool,
                     20,
                     app_config,
                 ),
@@ -531,54 +539,122 @@ mod tests {
                 .await;
         }
 
-        pub async fn setup_authenticated_state(&self) -> String {
-            // Generate a session cookie
-            let session = Session::new();
-            // Generate JWT
-            let access_token = AccessToken::new("some-opaque-access-token".to_string());
-            let refresh_token = RefreshToken::new("some-opaque-refresh-token".to_string());
-            let refresh_token = Some(&refresh_token);
-            let id_token = id_token(self.issuer_url.as_str(), "unittest", "nonce", &access_token);
-            let jwt = SessionTokens::new(
-                &access_token,
-                refresh_token,
-                &id_token,
-                SystemTime::now() + std::time::Duration::from_secs(15),
-                SystemTime::now() + std::time::Duration::from_secs(500),
-            );
-            // Execute same code as the `callback` handler
-
-            let sh: SessionHandle = Arc::new(tokio::sync::RwLock::new(session.clone()));
-            let request = Request::builder()
-                .extension(sh)
-                .method("GET")
-                .uri("/")
-                .body(())
+        pub async fn setup_authenticated_state(&self, app: &mut Router) -> String {
+            // Call login to create a session
+            let login_request = Request::builder()
+                .uri("/auth/login?app_uri=http%3A%2F%2Fexample.com&redirect_uri=http%3A%2F%2Fexample.org%2F&scope=openid")
+                .body(Body::empty())
                 .unwrap();
-            let mut request_parts = request.into_parts().0;
-            let state = ();
-            let mut ws = WritableSession::from_request_parts(&mut request_parts, &state)
+            let login_response = ServiceExt::<Request<Body>>::ready(app)
+                .await
+                .unwrap()
+                .call(login_request)
                 .await
                 .unwrap();
-            callback_post_token_exchange(&mut ws, &self.redis_client, jwt, "testbot".to_string())
+            // Assert redirect
+            assert_eq!(
+                303,
+                login_response.status().as_u16(),
+                "No redirect: {}",
+                String::from_utf8(
+                    login_response
+                        .into_body()
+                        .collect()
+                        .await
+                        .unwrap()
+                        .to_bytes()
+                        .to_vec()
+                )
+                .unwrap_or_else(|e| format!("utf8 error: {e}"))
+            );
+            let location = login_response
+                .headers()
+                .get(LOCATION)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
+            // Extract state from redirect uri
+            let state: String = location
+                .split('&')
+                .find(|s| s.starts_with("state"))
+                .expect("Redirect uri should have nonce")
+                .split('=')
+                .skip(1)
+                .take(1)
+                .collect();
+            // Extract nonce from redirect uri
+            let nonce: String = location
+                .split('&')
+                .find(|s| s.starts_with("nonce"))
+                .expect("Redirect uri should have nonce")
+                .split('=')
+                .skip(1)
+                .take(1)
+                .collect();
+
+            // Extract session cookie
+            let session_cookie = login_response
+                .headers()
+                .get(SET_COOKIE)
+                .expect("Login response should have a session cookie")
+                .to_str()
+                .expect("Session cookie should be a string")
+                .split(';')
+                .find(|s| s.starts_with(&self.cookie_name))
+                .expect("Login response should have a session cookie");
+
+            // prepare mock server for token exchange
+            let code = random_alphanumeric_string(32);
+            Mock::given(method("POST"))
+                .and(path("/testing-issuer/token"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    oidc_token(&self.issuer_url, &self.client_id, &nonce),
+                    "application/json",
+                ))
+                .mount(&self.mock_server)
                 .await;
 
-            // Set session cookie name on self
-            let cookie_value = self
-                .session_store
-                .store_session(session)
+            // Run callback request
+            let callback_request = Request::builder()
+                .uri(format!("/auth/callback?code={code}&state={state}",))
+                .header(COOKIE, session_cookie)
+                .body(Body::empty())
+                .unwrap();
+            let callback_response = ServiceExt::<Request<Body>>::ready(app)
                 .await
-                .expect("Storing session failed")
-                .expect("Session has id");
+                .unwrap()
+                .call(callback_request)
+                .await
+                .unwrap();
+            // Extract session cookie for authenticated state
+            let authenticated_cookie = login_response
+                .headers()
+                .get(SET_COOKIE)
+                .expect("Callback response should have a session cookie")
+                .to_str()
+                .expect("Session cookie should be a string")
+                .split(';')
+                .find(|s| s.starts_with(&self.cookie_name))
+                .expect("Callback response should have a session cookie");
 
-            let mut mac = Hmac::<Sha256>::new_from_slice(&self.session_secret.as_bytes()[..32])
-                .expect("good key");
-            mac.update(cookie_value.as_bytes());
+            assert_eq!(
+                callback_response.status(),
+                303,
+                "Response not ok: {}",
+                String::from_utf8(
+                    callback_response
+                        .into_body()
+                        .collect()
+                        .await
+                        .unwrap()
+                        .to_bytes()
+                        .to_vec()
+                )
+                .unwrap_or_else(|e| format!("utf8 error: {e}"))
+            );
 
-            // Cookie's new value is [MAC | original-value].
-            let mut new_value = base64::encode(mac.finalize().into_bytes());
-            new_value.push_str(cookie_value.as_str());
-            format!("{}={new_value}", self.cookie_name)
+            authenticated_cookie.to_string()
         }
     }
 }
