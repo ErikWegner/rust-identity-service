@@ -7,7 +7,7 @@ use tower_sessions_redis_store::{
     fred::{
         clients::{RedisClient, RedisPool},
         interfaces::{ClientLike, KeysInterface},
-        types::{RedisConfig, Server, ServerConfig},
+        types::{PerformanceConfig, ReconnectPolicy, RedisConfig, Server, ServerConfig},
     },
     RedisStore,
 };
@@ -52,17 +52,15 @@ pub(crate) async fn redis_cons(connection_url: &str) -> Result<(RedisStore<Redis
         "📦 Establishing redis session connection to {}",
         connection_url
     );
+
     let pool = RedisPool::new(
-        RedisConfig {
-            server: ServerConfig::Centralized {
-                server: Server::try_from(connection_url)
-                    .with_context(|| format!("Parsing redis connection url {connection_url}"))?,
-            },
+        RedisConfig::from_url(connection_url).context("Invalid redis connection url")?,
+        Some(PerformanceConfig {
+            default_command_timeout: core::time::Duration::from_millis(300),
             ..Default::default()
-        },
+        }),
         None,
-        None,
-        None,
+        Some(ReconnectPolicy::new_constant(0, 5_000)),
         6,
     )
     .context("Redis setup")?;

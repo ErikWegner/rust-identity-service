@@ -211,7 +211,7 @@ mod tests {
     };
     use serde_json::json;
     use tower::{Service, ServiceExt};
-    use tower_sessions_redis_store::{fred::clients::RedisPool, RedisStore};
+    use tower_sessions_redis_store::fred::clients::RedisPool;
     use tracing_log::LogTracer;
     use tracing_subscriber::filter::EnvFilter;
     use wiremock::{
@@ -419,7 +419,6 @@ mod tests {
         oidc_client: OIDCClient,
         redis_pool: RedisPool,
         session_layer: RidserSessionLayer,
-        session_store: RedisStore<RedisPool>,
     }
 
     impl MockSetup {
@@ -454,7 +453,7 @@ mod tests {
             let session_secret: String = random_alphanumeric_string(64);
             let (session_store, redis_pool) = redis_cons(
                 std::env::var("RIDSER_TEST_REDIS_URL")
-                    .unwrap_or_else(|_| "redis:6379".to_string())
+                    .unwrap_or_else(|_| "redis://redis:6379/".to_string())
                     .as_ref(),
             )
             .await
@@ -477,7 +476,6 @@ mod tests {
                 redis_pool,
                 oidc_client,
                 session_layer,
-                session_store,
             }
         }
 
