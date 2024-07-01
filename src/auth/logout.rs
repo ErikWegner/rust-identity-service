@@ -53,7 +53,9 @@ pub(crate) async fn logout(
     if !logout_app_settings.is_app_uri_allowed(&logout_query_params.app_uri) {
         return (StatusCode::BAD_REQUEST, "Invalid app_uri").into_response();
     }
-    let _ = session.insert("ridser_logout_app_uri", logout_query_params.app_uri.clone());
+    let _ = session
+        .insert("ridser_logout_app_uri", logout_query_params.app_uri.clone())
+        .await;
     let logout_uri = logout_app_settings.logout_uri;
     let session_tokens: Option<SessionTokens> = session.get(SESSION_KEY_JWT).await.unwrap_or(None);
     let id_token = session_tokens.map(|st| st.id_token).unwrap_or_default();
@@ -203,8 +205,8 @@ mod tests {
     async fn test_handles_authenticated_state() {
         // Arrange
         let m = MockSetup::new().await;
-        let app = m.router();
-        let session_cookie = m.setup_authenticated_state_to_be_replaced().await;
+        let mut app = m.router();
+        let session_cookie = m.setup_authenticated_state(&mut app).await;
 
         // Act
         let response = app
@@ -243,7 +245,7 @@ mod tests {
         // Arrange
         let m = MockSetup::new().await;
         let mut app = m.router();
-        let session_cookie = m.setup_authenticated_state_to_be_replaced().await;
+        let session_cookie = m.setup_authenticated_state(&mut app).await;
         let app_uri = "http://logout.example.com".to_string();
 
         // Act

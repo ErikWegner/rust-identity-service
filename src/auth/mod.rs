@@ -186,9 +186,9 @@ pub(crate) fn random_alphanumeric_string(length: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::SystemTime};
+    use std::sync::Arc;
 
-    use axum::{body::Body, extract::FromRequestParts, http::HeaderValue, Router};
+    use axum::{body::Body, http::HeaderValue, Router};
     use base64::prelude::*;
     use chrono::Utc;
     use http_body_util::BodyExt;
@@ -211,7 +211,6 @@ mod tests {
     };
     use serde_json::json;
     use tower::{Service, ServiceExt};
-    use tower_sessions::{session::Id, Session};
     use tower_sessions_redis_store::{fred::clients::RedisPool, RedisStore};
     use tracing_log::LogTracer;
     use tracing_subscriber::filter::EnvFilter;
@@ -224,10 +223,8 @@ mod tests {
 
     use super::{
         auth_routes,
-        callback::callback_post_token_exchange,
         logout::{LogoutAppSettings, LogoutBehavior},
         random_alphanumeric_string, AppConfigurationState, LoginAppSettings, OIDCClient,
-        SessionTokens,
     };
 
     static GLOBAL_LOGGER_SETUP: Lazy<Arc<bool>> = Lazy::new(|| {
@@ -660,36 +657,6 @@ mod tests {
             );
 
             authenticated_cookie.to_string()
-        }
-
-        pub async fn setup_authenticated_state_to_be_replaced(&self) -> String {
-            let id = Id::default();
-            // Generate a session cookie
-            let session = Session::new(Some(id), Arc::new(self.session_store.clone()), None);
-            // Generate JWT
-            let access_token = AccessToken::new("some-opaque-access-token".to_string());
-            let refresh_token = RefreshToken::new("some-opaque-refresh-token".to_string());
-            let refresh_token = Some(&refresh_token);
-            let id_token = id_token(self.issuer_url.as_str(), "unittest", "nonce", &access_token);
-            let jwt = SessionTokens::new(
-                &access_token,
-                refresh_token,
-                &id_token,
-                SystemTime::now() + std::time::Duration::from_secs(15),
-                SystemTime::now() + std::time::Duration::from_secs(500),
-            );
-            // Execute same code as the `callback` handler
-
-            let request = Request::builder().method("GET").uri("/").body(()).unwrap();
-            let mut request_parts = request.into_parts().0;
-            request_parts.extensions.insert(session);
-            let state = ();
-            let mut ws = Session::from_request_parts(&mut request_parts, &state)
-                .await
-                .unwrap();
-            callback_post_token_exchange(&ws, self.redis_pool.clone(), jwt, "testbot".to_string())
-                .await;
-            String::new()
         }
     }
 }

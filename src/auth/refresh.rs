@@ -91,7 +91,7 @@ pub(crate) async fn refresh(
         let jwt = client.refresh_token(refresh_token.as_str()).await;
         let response = match jwt {
             Ok(jwt) => {
-                let _ = session.insert(SESSION_KEY_JWT, jwt);
+                let _ = session.insert(SESSION_KEY_JWT, jwt).await;
                 (StatusCode::OK, "Refresh successful".to_string()).into_response()
             }
             Err(e) => {
