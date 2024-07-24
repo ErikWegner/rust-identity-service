@@ -5,6 +5,7 @@ use axum::{
     Extension,
 };
 use axum_macros::debug_handler;
+use reqwest::Url;
 use serde::Deserialize;
 use tower_sessions::Session;
 use tower_sessions_redis_store::fred::clients::RedisPool;
@@ -22,7 +23,8 @@ use super::{random_alphanumeric_string, SessionTokens};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CallbackQueryParams {
-    code: String,
+    code: Option<String>,
+    error: Option<String>,
     state: String,
 }
 
@@ -69,9 +71,29 @@ pub(crate) async fn callback(
         return Err((StatusCode::BAD_REQUEST, "Invalid request").into_response());
     }
 
+    // If callback contains an error, redirect to the app with the error message.
+    if let Some(error) = &callback_query_params.error {
+        let u = Url::parse(&login_callback_session_params.app_uri).map(|u| {
+            // append error details to the redirect URI
+            let mut url = u.clone();
+            url.query_pairs_mut().append_pair("error", error.as_str());
+            url.to_string()
+        });
+        return match u {
+            Ok(app_uri) => Ok(Redirect::to(app_uri.as_str()).into_response()),
+            Err(e) => {
+                error!(
+                    "Failed to parse redirect URI: {} {:?}",
+                    &login_callback_session_params.app_uri, e
+                );
+                Err((StatusCode::BAD_REQUEST, "Invalid app_uri").into_response())
+            }
+        };
+    }
+
     let (jwt, userid) = oidc_client
         .exchange_code(TokenExchangeData {
-            code: callback_query_params.code.clone(),
+            code: callback_query_params.code.clone().unwrap_or_default(),
             nonce: login_callback_session_params.nonce,
             pkce_verifier: login_callback_session_params.pkce_verifier,
             redirect_uri: login_callback_session_params.redirect_uri.clone(),
