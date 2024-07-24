@@ -4,7 +4,7 @@ use anyhow::Result;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
-    Extension,
+    Extension, Json,
 };
 use axum_macros::debug_handler;
 use tower_sessions::Session;
@@ -92,7 +92,7 @@ pub(crate) async fn refresh(
         let response = match jwt {
             Ok(jwt) => {
                 let _ = session.insert(SESSION_KEY_JWT, jwt).await;
-                (StatusCode::OK, "Refresh successful".to_string()).into_response()
+                (StatusCode::OK, Json("Refresh successful")).into_response()
             }
             Err(e) => {
                 debug!("Failed to refresh token: {}", e);
