@@ -45,14 +45,17 @@ async fn shutdown_signal() {
     debug!("⏹️ signal received, starting graceful shutdown");
 }
 
-async fn init_oidc_client() -> Result<OIDCClient> {
+fn oidc_client_from_env() -> Result<String> {
+    env::var("RIDSER_OIDC_CLIENT_ID").context("missing RIDSER_OIDC_CLIENT_ID")
+}
+
+async fn init_oidc_client(client_id: &str) -> Result<OIDCClient> {
     let issuer_url =
         env::var("RIDSER_OIDC_ISSUER_URL").context("missing RIDSER_OIDC_ISSUER_URL")?;
-    let client_id = env::var("RIDSER_OIDC_CLIENT_ID").context("missing RIDSER_OIDC_CLIENT_ID")?;
     let client_secret =
         env::var("RIDSER_OIDC_CLIENT_SECRET").context("missing RIDSER_OIDC_CLIENT_SECRET")?;
     let auth_url = env::var("RIDSER_OIDC_AUTH_URL").ok();
-    OIDCClient::build(&issuer_url, &client_id, &client_secret, auth_url).await
+    OIDCClient::build(&issuer_url, client_id, &client_secret, auth_url).await
 }
 
 fn init_session_vars() -> Result<SessionSetup> {
@@ -70,7 +73,8 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
     let (store, client) = redis_cons(&connection_url).await?;
     let session_setup = init_session_vars()?;
     let session_layer = session_setup.get_session_layer(store)?;
-    let oidc_client = init_oidc_client().await?;
+    let client_id = oidc_client_from_env()?;
+    let oidc_client = init_oidc_client(&client_id).await?;
     let bind_addr = socket_addr()?;
     let proxy_rules: Vec<_> = dotenvy::vars()
         .filter_map(|(key, value)| {
@@ -99,6 +103,7 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
                 .collect(),
         ),
         logout_app_settings: LogoutAppSettings {
+            client_id,
             logout_uri: env::var("RIDSER_LOGOUT_SSO_URI")
                 .context("Missing RIDSER_LOGOUT_SSO_URI")?,
             _behavior: LogoutBehavior::FrontChannelLogoutWithIdToken,

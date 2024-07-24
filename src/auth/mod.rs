@@ -487,6 +487,7 @@ mod tests {
                     "http://example.org/my/app/*".to_string(),
                 ]),
                 logout_app_settings: LogoutAppSettings {
+                    client_id: self.client_id.clone(),
                     logout_uri: format!("{}/logout", self.mock_server.uri()),
                     _behavior: LogoutBehavior::FrontChannelLogoutWithIdToken,
                     allowed_app_uris_match: vec![

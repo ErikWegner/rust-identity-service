@@ -32,6 +32,7 @@ pub(crate) struct LogoutQueryParams {
 
 #[derive(Clone, Debug)]
 pub struct LogoutAppSettings {
+    pub(crate) client_id: String,
     pub(crate) logout_uri: String,
     pub(crate) _behavior: LogoutBehavior,
     pub(crate) allowed_app_uris_match: Vec<String>,
@@ -60,9 +61,16 @@ pub(crate) async fn logout(
     let session_tokens: Option<SessionTokens> = session.get(SESSION_KEY_JWT).await.unwrap_or(None);
     let id_token = session_tokens.map(|st| st.id_token).unwrap_or_default();
     let post_logout_redirect_uri = logout_query_params.redirect_uri.clone();
-    let uri = format!(
-        "{logout_uri}?id_token_hint={id_token}&post_logout_redirect_uri={post_logout_redirect_uri}"
-    );
+    let uri = if id_token.is_empty() {
+        format!(
+            "{logout_uri}?post_logout_redirect_uri={post_logout_redirect_uri}&client_id={}",
+            logout_app_settings.client_id
+        )
+    } else {
+        format!(
+            "{logout_uri}?id_token_hint={id_token}&post_logout_redirect_uri={post_logout_redirect_uri}"
+        )
+    };
 
     Redirect::to(uri.as_str()).into_response()
 }
