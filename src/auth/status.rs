@@ -15,7 +15,6 @@ pub(crate) struct StatusResponse {
 }
 
 fn status_response_map(session_tokens: Option<SessionTokens>) -> StatusResponse {
-    tracing::warn!("STATUS: {:?}", session_tokens);
     session_tokens
         .map(|st| {
             let now = std::time::SystemTime::now();
