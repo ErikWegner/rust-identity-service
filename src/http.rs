@@ -7,9 +7,13 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use axum::{
     body::Body,
+    extract::{
+        ws::{Message, WebSocket},
+        WebSocketUpgrade,
+    },
     http::{
         header::{AUTHORIZATION, COOKIE, HOST},
-        HeaderValue, Method, StatusCode, Uri,
+        HeaderValue, Method, Request, StatusCode, Uri,
     },
     response::{IntoResponse, Response},
     routing::delete,
@@ -17,12 +21,15 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 use axum_macros::debug_handler;
+use futures::{SinkExt, StreamExt};
 use hyper_rustls::HttpsConnector;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as TungsteniteMessage};
 use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_sessions::Session;
 use tower_sessions_redis_store::fred::clients::RedisPool;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
+use tungstenite::ClientRequestBuilder;
 
 use crate::{
     auth::{auth_routes, AppConfigurationState, OIDCClient, SessionTokens},
@@ -150,6 +157,7 @@ fn api_proxy(
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
             .build(proxy_client_https);
     Ok(Router::new()
+        .route("/ws", axum::routing::get(handle_ws))
         .route(
             "/*path",
             delete(proxy)
@@ -257,6 +265,99 @@ async fn proxy(
                 .into_response()
         })?
         .into_response())
+}
+
+async fn handle_ws(session: Session, ws: WebSocketUpgrade) -> impl IntoResponse {
+    debug!("handle_ws: upgrading WebSocket connection");
+    let jwt: Option<SessionTokens> = session.get(SESSION_KEY_JWT).await.unwrap_or(None);
+    if jwt.is_none() {
+        warn!("No token, dropping WebSocket connection");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let session_tokens = jwt.unwrap();
+    ws.on_upgrade(move |socket| handle_socket(socket, session_tokens))
+}
+
+async fn handle_socket(socket: WebSocket, session_tokens: SessionTokens) {
+    // The remote WebSocket server URL
+    let remote_url = "ws://172.17.0.1:3000/api/ws";
+
+    // Add authorization header to the remote WebSocket connection
+    let uri: Uri = remote_url.parse().expect("Invalid remote WebSocket URL");
+    let builder = ClientRequestBuilder::new(uri).with_header(
+        AUTHORIZATION.as_str(),
+        format!("Bearer {}", session_tokens.access_token()),
+    );
+
+    // Connect to the remote WebSocket server
+    let (remote_ws_stream, _) = connect_async(builder)
+        .await
+        .expect("Failed to connect to remote WebSocket server");
+
+    // Split the remote WebSocket stream into a sink and a stream
+    let (mut remote_ws_sink, mut remote_ws_stream) = remote_ws_stream.split();
+
+    // Create a channel for communication between the two WebSockets
+    let (mut client_ws_sink, mut client_ws_stream) = socket.split();
+
+    // Forward messages from the client to the remote server
+    let client_to_remote = async {
+        while let Some(Ok(msg)) = client_ws_stream.next().await {
+            let tungstenite_msg = axum_to_tungstenite_message(msg);
+            if let Some(tungstenite_msg) = tungstenite_msg {
+                remote_ws_sink.send(tungstenite_msg).await.unwrap();
+            }
+        }
+    };
+
+    // Forward messages from the remote server to the client
+    let remote_to_client = async {
+        while let Some(Ok(msg)) = remote_ws_stream.next().await {
+            let axum_msg = tungstenite_to_axum_message(msg);
+            if let Some(axum_msg) = axum_msg {
+                client_ws_sink.send(axum_msg).await.unwrap();
+            }
+        }
+    };
+
+    // Run both tasks concurrently
+    tokio::select! {
+        _ = client_to_remote => {},
+        _ = remote_to_client => {},
+    }
+}
+
+// Helper function to convert axum WebSocket messages to tungstenite messages
+fn axum_to_tungstenite_message(msg: Message) -> Option<TungsteniteMessage> {
+    match msg {
+        Message::Text(text) => Some(TungsteniteMessage::Text(text)),
+        Message::Binary(data) => Some(TungsteniteMessage::Binary(data)),
+        Message::Ping(data) => Some(TungsteniteMessage::Ping(data)),
+        Message::Pong(data) => Some(TungsteniteMessage::Pong(data)),
+        Message::Close(frame) => Some(TungsteniteMessage::Close(frame.map(|f| {
+            tungstenite::protocol::CloseFrame {
+                code: tungstenite::protocol::frame::coding::CloseCode::from(f.code),
+                reason: f.reason,
+            }
+        }))),
+    }
+}
+
+// Helper function to convert tungstenite WebSocket messages to axum messages
+fn tungstenite_to_axum_message(msg: TungsteniteMessage) -> Option<Message> {
+    match msg {
+        TungsteniteMessage::Text(text) => Some(Message::Text(text)),
+        TungsteniteMessage::Binary(data) => Some(Message::Binary(data)),
+        TungsteniteMessage::Ping(data) => Some(Message::Ping(data)),
+        TungsteniteMessage::Pong(data) => Some(Message::Pong(data)),
+        TungsteniteMessage::Close(frame) => Some(Message::Close(frame.map(|f| {
+            axum::extract::ws::CloseFrame {
+                code: f.code.into(),
+                reason: f.reason,
+            }
+        }))),
+        TungsteniteMessage::Frame(_) => None,
+    }
 }
 
 pub(crate) fn app(

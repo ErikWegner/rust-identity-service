@@ -1,15 +1,17 @@
+name: example-ridser
+
 services:
   ridser:
     # https://mcr.microsoft.com/v2/vscode/devcontainers/rust/tags/list
-    image: mcr.microsoft.com/devcontainers/rust:1-1-bullseye
+    image: erikwegner/ridser:2.0.0
     ports:
       # Publish keycloak here, because network stack is shared
       - "8101:8101"
       - "3000:3000"
     volumes:
       # Mount the root folder that contains .git
-      - ..:/workspace:cached
-    command: /bin/sh -c "while sleep 1000; do :; done"
+      - ..:/files:ro
+      - ../.env.default:/.env:ro
 
   redis:
     image: redis:7-alpine

@@ -46,7 +46,6 @@ mod tests {
             conf,
             Some(PerformanceConfig {
                 default_command_timeout: core::time::Duration::from_millis(300),
-
                 ..Default::default()
             }),
             None,

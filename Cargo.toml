@@ -1,24 +1,25 @@
 [package]
 name = "ridser"
-version = "2.0.0"
+version = "3.0.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.70"
-axum = "0.7.5"
+anyhow = "1.0.86"
+axum = { version = "0.7.5", features = ["ws"] }
 axum-extra = { version = "0.9.3", features = ["cookie"] }
 axum-macros = "0.4.1"
 base64 = "0.22.1"
 chrono = { version = "0.4.24", default_features = false }
 cookie = { version = "0.18.1", features = ["private"] }
 dotenvy = "0.15.7"
+futures = "0.3.30"
 http-body-util = "0.1.2"
 hyper = { version = "1.3", features = ["full"] }
 hyper-util = { version = "0.1.5", features = ["client-legacy"] }
-hyper-rustls = "0.27"
-oauth2 = "4.4.1"
+hyper-rustls = "0.27.2"
+oauth2 = "4.4.2"
 openidconnect = "3.5.0"
 rand = "0.8.5"
 reqwest = { version = "0.11", default-features = false, features = [
@@ -34,15 +35,18 @@ tokio = { version = "1.27.0", features = [
     "rt-multi-thread",
     "signal",
 ] }
+tokio-tungstenite = "0.23.1"
+tower = "0.5"
 tower-http = { version = "0.5.2", features = ["fs", "trace"] }
 tower-sessions = { version = "0.12.2", features = ["private"] }
 tower-sessions-redis-store = "0.13.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tower = "0.4.13"
+tungstenite = "0.23.0"
 
 [dev-dependencies]
 hyper = "1.3.1"
 once_cell = "1.17.1"
+tower = { version = "0.5", features = ["util"] }
 tracing-log = "0.2.0"
 wiremock = "0.6.0"
