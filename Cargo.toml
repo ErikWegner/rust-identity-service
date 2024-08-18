@@ -11,7 +11,7 @@ axum = { version = "0.7.5", features = ["ws"] }
 axum-extra = { version = "0.9.3", features = ["cookie"] }
 axum-macros = "0.4.1"
 base64 = "0.22.1"
-chrono = { version = "0.4.24", default_features = false }
+chrono = { version = "0.4.24", default-features = false }
 cookie = { version = "0.18.1", features = ["private"] }
 dotenvy = "0.15.7"
 futures = "0.3.30"

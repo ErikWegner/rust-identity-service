@@ -1,6 +1,6 @@
 ## Build stage
 ## Build mimalloc
-FROM alpine:3.20.2 as mimallocbuilder
+FROM alpine:3.20.2 AS mimallocbuilder
 RUN apk add git build-base cmake linux-headers
 RUN cd /; git clone --depth 1 https://github.com/microsoft/mimalloc; cd mimalloc; mkdir build; cd build; cmake ..; make -j$(nproc); make install
 
