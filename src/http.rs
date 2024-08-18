@@ -13,7 +13,7 @@ use axum::{
     },
     http::{
         header::{AUTHORIZATION, COOKIE, HOST},
-        HeaderValue, Method, Request, StatusCode, Uri,
+        HeaderValue, Method, StatusCode, Uri,
     },
     response::{IntoResponse, Response},
     routing::delete,
@@ -28,7 +28,7 @@ use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_sessions::Session;
 use tower_sessions_redis_store::fred::clients::RedisPool;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 use tungstenite::ClientRequestBuilder;
 
 use crate::{
@@ -156,23 +156,26 @@ fn api_proxy(
     let proxy_client: ProxyClient =
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
             .build(proxy_client_https);
-    Ok(Router::new()
-        .route("/ws", axum::routing::get(handle_ws))
-        .route(
-            "/*path",
-            delete(proxy)
-                .get(proxy)
-                .options(proxy)
-                .patch(proxy)
-                .post(proxy)
-                .put(proxy),
-        )
-        .layer(
-            ServiceBuilder::new()
-                .layer(session_layer.clone())
-                .layer(Extension(proxy_config.clone()))
-                .layer(Extension(proxy_client)),
-        ))
+    let mut r = Router::new();
+    let wsproxytarget = std::env::var("RIDSER_WS_PROXY_TARGET").unwrap_or_default();
+    if !wsproxytarget.is_empty() {
+        r = r.route("/ws", axum::routing::get(handle_ws));
+    }
+    Ok(r.route(
+        "/*path",
+        delete(proxy)
+            .get(proxy)
+            .options(proxy)
+            .patch(proxy)
+            .post(proxy)
+            .put(proxy),
+    )
+    .layer(
+        ServiceBuilder::new()
+            .layer(session_layer.clone())
+            .layer(Extension(proxy_config.clone()))
+            .layer(Extension(proxy_client)),
+    ))
 }
 
 #[debug_handler]
@@ -279,8 +282,10 @@ async fn handle_ws(session: Session, ws: WebSocketUpgrade) -> impl IntoResponse 
 }
 
 async fn handle_socket(socket: WebSocket, session_tokens: SessionTokens) {
-    // The remote WebSocket server URL
-    let remote_url = "ws://172.17.0.1:3000/api/ws";
+    // This environment variable has already been checked before.
+    // TODO: provide through axum state
+    let remote_url =
+        std::env::var("RIDSER_WS_PROXY_TARGET").expect("RIDSER_WS_PROXY_TARGET not set");
 
     // Add authorization header to the remote WebSocket connection
     let uri: Uri = remote_url.parse().expect("Invalid remote WebSocket URL");
