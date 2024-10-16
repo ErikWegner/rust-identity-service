@@ -38,3 +38,11 @@ implement a _Backend for Frontend_ pattern.
    ```bash
    docker cp rust-identity-service_devcontainer-keycloak-1:/tmp/multcorp.json dev_realm.json
    ```
+
+## Development
+
+You can use VSCode with devcontainer extension, or run the containers yourself:
+
+1. `$ cd .devcontainer`
+2. `docker compose up -d`
+3. `docker compose exec -u ${UID} -it ridser /bin/bash`
