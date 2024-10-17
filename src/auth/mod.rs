@@ -196,7 +196,6 @@ mod tests {
         header::{COOKIE, LOCATION, SET_COOKIE},
         Request,
     };
-    use oauth2::EmptyExtraTokenFields;
     use once_cell::sync::Lazy;
     use openidconnect::{
         core::{
@@ -205,9 +204,9 @@ mod tests {
             CoreRsaPrivateSigningKey, CoreSubjectIdentifierType, CoreTokenResponse, CoreTokenType,
         },
         AccessToken, Audience, AuthUrl, EmptyAdditionalClaims, EmptyAdditionalProviderMetadata,
-        EndUserEmail, IdToken, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl, Nonce, PrivateSigningKey,
-        RefreshToken, ResponseTypes, Scope, StandardClaims, SubjectIdentifier, TokenUrl,
-        UserInfoUrl,
+        EmptyExtraTokenFields, EndUserEmail, IdToken, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl,
+        Nonce, PrivateSigningKey, RefreshToken, ResponseTypes, Scope, StandardClaims,
+        SubjectIdentifier, TokenUrl, UserInfoUrl,
     };
     use serde_json::json;
     use tower::{Service, ServiceExt};
@@ -330,7 +329,6 @@ mod tests {
         openidconnect::core::CoreGenderClaim,
         openidconnect::core::CoreJweContentEncryptionAlgorithm,
         CoreJwsSigningAlgorithm,
-        openidconnect::core::CoreJsonWebKeyType,
     > {
         let rsa_pem = include_bytes!("../../test.pem");
         let rsa_pem: String = String::from_utf8(rsa_pem.to_vec()).expect("Read test.pem");

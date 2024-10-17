@@ -51,9 +51,6 @@ pub(crate) async fn logout(
     session: Session,
     logout_query_params: Query<LogoutQueryParams>,
 ) -> Response {
-    if !logout_app_settings.is_app_uri_allowed(&logout_query_params.app_uri) {
-        return (StatusCode::BAD_REQUEST, "Invalid app_uri").into_response();
-    }
     let _ = session
         .insert("ridser_logout_app_uri", logout_query_params.app_uri.clone())
         .await;
@@ -76,7 +73,10 @@ pub(crate) async fn logout(
 }
 
 #[debug_handler]
-pub(crate) async fn logout_callback(session: Session) -> Response {
+pub(crate) async fn logout_callback(
+    State(logout_app_settings): State<LogoutAppSettings>,
+    session: Session,
+) -> Response {
     let app_uri = session
         .get::<String>("ridser_logout_app_uri")
         .await
@@ -87,6 +87,9 @@ pub(crate) async fn logout_callback(session: Session) -> Response {
         });
 
     let _: Result<(), _> = session.flush().await;
+    if !logout_app_settings.is_app_uri_allowed(&app_uri) {
+        return (StatusCode::BAD_REQUEST, "Invalid app_uri").into_response();
+    }
     Redirect::to(&app_uri).into_response()
 }
 
@@ -201,8 +204,8 @@ mod tests {
             // Assert
             assert_eq!(
                 status,
-                StatusCode::BAD_REQUEST,
-                "Should be BAD REQUEST for app_uri {}, body was {}",
+                StatusCode::SEE_OTHER,
+                "Should be SEE OTHER for app_uri {}, body was {}",
                 app_uri,
                 body
             );
