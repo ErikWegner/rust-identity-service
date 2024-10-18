@@ -39,6 +39,8 @@ tower-sessions-redis-store = "0.13.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tower = { version = "0.4.13", features = ["util"] }
+mimalloc = "0.1.43"
+rustls = { version = "0.23.15", features = ["ring"] }
 
 [dev-dependencies]
 hyper = "1.5.0"
