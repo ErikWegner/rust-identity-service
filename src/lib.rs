@@ -1,7 +1,6 @@
 use std::env;
 
 use anyhow::{Context, Result};
-use http::socket_addr;
 use session::SessionSetup;
 use tokio::signal;
 use tracing::debug;
@@ -75,7 +74,6 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
     let session_layer = session_setup.get_session_layer(store)?;
     let client_id = oidc_client_from_env()?;
     let oidc_client = init_oidc_client(&client_id).await?;
-    let bind_addr = socket_addr()?;
     let proxy_rules: Vec<_> = dotenvy::vars()
         .filter_map(|(key, value)| {
             if key.starts_with("RIDSER_PROXY_TARGET_RULE_") && value.contains("=>") {
@@ -124,10 +122,11 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
         app_config,
     );
 
+    let listener = http::port_listener().await?;
+    let bind_addr = listener
+        .local_addr()
+        .context("Retrieve listening address")?;
     tracing::info!("💈 Listening on http://{}", &bind_addr);
-    let listener = tokio::net::TcpListener::bind(&bind_addr)
-        .await
-        .context("Cannot start server")?;
 
     axum::serve(listener, app?.into_make_service())
         .with_graceful_shutdown(shutdown_signal())

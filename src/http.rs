@@ -93,16 +93,30 @@ impl ProxyConfig {
     }
 }
 
-pub(crate) fn socket_addr() -> Result<SocketAddr> {
+pub(crate) async fn port_listener() -> Result<tokio::net::TcpListener> {
     let port_str = dotenvy::var("RIDSER_BIND_PORT").unwrap_or_else(|_| String::from("3000"));
     let port_parsed = port_str
         .parse::<u16>()
         .context("RIDSER_BIND_PORT must be a number between 1 and 65535")?;
 
-    let interface_addr = dotenvy::var("RIDSER_BIND_ADDRESS").unwrap_or_else(|_| String::from("::"));
-    let ip = IpAddr::from_str(interface_addr.as_str())
-        .with_context(|| format!("Invalid address {}", interface_addr))?;
-    Ok(SocketAddr::new(ip, port_parsed))
+    // Try to bind to a IPv6 address if available, falling back to IPv4
+
+    let listener = tokio::net::TcpListener::bind(SocketAddr::new(
+        IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+        port_parsed,
+    ))
+    .await;
+
+    if let Ok(listener) = listener {
+        return Ok(listener);
+    }
+
+    tokio::net::TcpListener::bind(SocketAddr::new(
+        IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+        port_parsed,
+    ))
+    .await
+    .context("Failed to bind to the specified address and port")
 }
 
 fn walk_dir(path: &str) -> Result<Vec<PathBuf>> {

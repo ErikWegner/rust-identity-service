@@ -39,12 +39,10 @@ services:
     image: erikwegner/rsecho:release-1.0.0
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0.1
+    image: quay.io/keycloak/keycloak:26.0.5
     command:
       - start-dev
       - --import-realm
-    # Use the network stack of another container, specified via its name
-    # https://docs.docker.com/engine/reference/run/#network-settings
     environment:
       - KC_BOOTSTRAP_ADMIN_USERNAME=admin
       - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
