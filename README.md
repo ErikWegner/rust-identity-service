@@ -50,3 +50,6 @@ You can use VSCode with devcontainer extension, or run the containers yourself:
 5. `export RUST_LOG=ridser=debug,info`
 
 ## Testing
+
+1. Install npm dependencies in the `tests` directory
+2. Run `npx playwright test`
