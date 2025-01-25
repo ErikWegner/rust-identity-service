@@ -10,6 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - Name: Run devcontainers, build binary
+        run: |
+          docker compose -f .devcontainer/docker-compose.yml up -d
+          docker compose -f .devcontainer/docker-compose.yml exec ridser "rustup update stable"
+          docker exec -it --user ${UID}:${GID} --workdir /workspace  devcontainer-ridser-1 /bin/bash -c "cargo build"
+          docker exec -itd --user ${UID}:${GID} --workdir /workspace  devcontainer-ridser-1 /bin/bash -c "cargo run"
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
