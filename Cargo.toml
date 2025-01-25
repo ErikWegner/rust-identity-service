@@ -1,15 +1,15 @@
 [package]
 name = "ridser"
-version = "2.2.0"
+version = "2.3.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 anyhow = "1.0.70"
-axum = "0.7.5"
-axum-extra = { version = "0.9.3", features = ["cookie"] }
-axum-macros = "0.4.1"
+axum = "0.8.1"
+axum-extra = { version = "0.10.0", features = ["cookie"] }
+axum-macros = "0.5.0"
 base64 = "0.22.1"
 chrono = { version = "0.4.24", default-features = false }
 cookie = { version = "0.18.1", features = ["private"] }
@@ -33,12 +33,12 @@ tokio = { version = "1.27.0", features = [
     "rt-multi-thread",
     "signal",
 ] }
-tower-http = { version = "0.5.2", features = ["fs", "trace"] }
-tower-sessions = { version = "0.12.2", features = ["private"] }
-tower-sessions-redis-store = "0.13.0"
+tower-http = { version = "0.6.2", features = ["fs", "trace"] }
+tower-sessions = { version = "0.14.0", features = ["private"] }
+tower-sessions-redis-store = "0.16.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tower = { version = "0.4.13", features = ["util"] }
+tower = { version = "0.5.2", features = ["util"] }
 mimalloc = "0.1.43"
 rustls = { version = "0.23.15", features = ["ring"] }
 

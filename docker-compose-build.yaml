@@ -39,7 +39,7 @@ services:
     image: erikwegner/rsecho:release-1.0.0
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0.5
+    image: quay.io/keycloak/keycloak:26.1.0
     command:
       - start-dev
       - --import-realm

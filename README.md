@@ -45,4 +45,8 @@ You can use VSCode with devcontainer extension, or run the containers yourself:
 
 1. `$ cd .devcontainer`
 2. `docker compose up -d`
-3. `docker compose exec -u ${UID} -it ridser /bin/bash`
+3. `docker compose exec -u ${UID}:${GID} -it ridser /bin/bash`
+4. `rustup update stable`
+5. `export RUST_LOG=ridser=debug,info`
+
+## Testing

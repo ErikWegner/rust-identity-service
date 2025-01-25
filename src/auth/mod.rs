@@ -24,7 +24,7 @@ use openidconnect::{
 };
 use serde::{Deserialize, Serialize};
 use tower::ServiceBuilder;
-use tower_sessions_redis_store::fred::clients::RedisPool;
+use tower_sessions_redis_store::fred::clients::Pool;
 
 use crate::session::RidserSessionLayer;
 
@@ -139,7 +139,7 @@ impl FromRef<AppConfigurationState> for LogoutAppSettings {
 pub(crate) fn auth_routes(
     oidc_client: OIDCClient,
     session_layer: &RidserSessionLayer,
-    client: RedisPool,
+    client: Pool,
     remaining_secs_threshold: u64,
     app_config: AppConfigurationState,
 ) -> Router {
@@ -210,7 +210,7 @@ mod tests {
     };
     use serde_json::json;
     use tower::{Service, ServiceExt};
-    use tower_sessions_redis_store::fred::clients::RedisPool;
+    use tower_sessions_redis_store::fred::clients::Pool;
     use tracing_log::LogTracer;
     use tracing_subscriber::filter::EnvFilter;
     use wiremock::{
@@ -415,7 +415,7 @@ mod tests {
         issuer_url: String,
         mock_server: MockServer,
         oidc_client: OIDCClient,
-        redis_pool: RedisPool,
+        redis_pool: Pool,
         session_layer: RidserSessionLayer,
     }
 

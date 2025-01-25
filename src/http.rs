@@ -21,7 +21,7 @@ use hyper_rustls::HttpsConnector;
 use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_sessions::Session;
-use tower_sessions_redis_store::fred::clients::RedisPool;
+use tower_sessions_redis_store::fred::clients::Pool;
 use tracing::{debug, error, warn};
 
 use crate::{
@@ -165,7 +165,7 @@ fn api_proxy(
             .build(proxy_client_https);
     Ok(Router::new()
         .route(
-            "/*path",
+            "/{*path}",
             delete(proxy)
                 .get(proxy)
                 .options(proxy)
@@ -277,7 +277,7 @@ pub(crate) fn app(
     oidc_client: OIDCClient,
     session_layer: &RidserSessionLayer,
     proxy_config: &ProxyConfig,
-    client: RedisPool,
+    client: Pool,
     remaining_secs_threshold: u64,
     app_config: AppConfigurationState,
 ) -> Result<Router> {
@@ -313,7 +313,11 @@ pub(crate) fn app(
         fallback.push("index.html");
         let serve_dir = ServeDir::new(fs_path).not_found_service(ServeFile::new(fallback));
 
-        app = app.nest_service(&uri_path, serve_dir);
+        if uri_path == "/" {
+            app = app.route_service("/", serve_dir);
+        } else {
+            app = app.nest_service(&uri_path, serve_dir);
+        }
     }
 
     Ok(app)

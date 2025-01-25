@@ -4,12 +4,12 @@ use axum::{
     routing::get,
     Extension, Router,
 };
-use tower_sessions_redis_store::fred::{clients::RedisPool, interfaces::ClientLike};
+use tower_sessions_redis_store::fred::{clients::Pool, interfaces::ClientLike};
 use tracing::error;
 
-async fn health_check(Extension(pool): Extension<RedisPool>) -> Response {
+async fn health_check(Extension(pool): Extension<Pool>) -> Response {
     let client = pool.next_connected();
-    let con: Result<(), _> = client.ping().await;
+    let con: Result<(), _> = client.ping(None).await;
 
     if let Err(err) = con {
         error!("Failed to connect to redis: {:?}", err);
@@ -19,7 +19,7 @@ async fn health_check(Extension(pool): Extension<RedisPool>) -> Response {
     (StatusCode::OK, "OK").into_response()
 }
 
-pub(crate) fn health_routes(client: RedisPool) -> Router {
+pub(crate) fn health_routes(client: Pool) -> Router {
     Router::new()
         .route("/up", get(|| async { "up" }))
         .route("/health", get(health_check).layer(Extension(client)))
@@ -34,15 +34,13 @@ mod tests {
     use http_body_util::BodyExt;
     use tokio::time::timeout;
     use tower::ServiceExt;
-    use tower_sessions_redis_store::fred::types::{
-        PerformanceConfig, ReconnectPolicy, RedisConfig,
-    };
+    use tower_sessions_redis_store::fred::prelude::*;
 
     use super::*;
 
-    async fn redis_client(connection_url: &str) -> RedisPool {
-        let conf = RedisConfig::from_url(connection_url).expect("Parsing redis connection url");
-        let redis_pool = RedisPool::new(
+    async fn redis_client(connection_url: &str) -> Pool {
+        let conf = Config::from_url(connection_url).expect("Parsing redis connection url");
+        let redis_pool = Pool::new(
             conf,
             Some(PerformanceConfig {
                 default_command_timeout: core::time::Duration::from_millis(300),
