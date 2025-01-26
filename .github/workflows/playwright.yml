@@ -14,8 +14,7 @@ jobs:
         run: |
           docker compose -f .devcontainer/docker-compose.yml up -d
           docker compose -f .devcontainer/docker-compose.yml exec ridser /bin/bash -c "rustup update stable"
-          docker exec -i --user ${UID}:${GID} --workdir /workspace  devcontainer-ridser-1 /bin/bash -c "cargo build"
-          docker exec -id --user ${UID}:${GID} --workdir /workspace  devcontainer-ridser-1 /bin/bash -c "cp .env.e2e-ci .env ; cargo run"
+          docker exec -i --user ${UID}:${GID} --workdir /workspace devcontainer-ridser-1 /bin/bash -c "cargo build"
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
@@ -27,7 +26,14 @@ jobs:
         run: npx playwright install --with-deps
       - name: Run Playwright tests
         working-directory: ./tests
-        run: npx playwright test
+        run: |
+          docker exec -id --user ${UID}:${GID} --workdir /workspace devcontainer-ridser-1 /bin/bash -c "cp .env.default .env ; cargo run"
+          export PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report/firefox_chromium/
+          npx playwright test --project firefox --project chromium
+          docker exec -id --user ${UID}:${GID} --workdir /workspace devcontainer-ridser-1 /bin/bash -c "killall ridser"
+          docker exec -id --user ${UID}:${GID} --workdir /workspace devcontainer-ridser-1 /bin/bash -c "cp .env.e2e-ci .env ; cargo run"
+          export PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report/webkit/
+          npx playwright test --project webkit
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
