@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { configuration } from './conf.ts';
+import { configuration } from '../conf.ts';
 
 test.describe('/app', () => {
   test.describe('/up', () => {
