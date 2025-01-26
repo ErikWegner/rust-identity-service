@@ -3,7 +3,7 @@ use std::env;
 use anyhow::{Context, Result};
 use session::SessionSetup;
 use tokio::signal;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::{
     auth::{
@@ -58,12 +58,21 @@ async fn init_oidc_client(client_id: &str) -> Result<OIDCClient> {
 }
 
 fn init_session_vars() -> Result<SessionSetup> {
+    let secure_cookie = env::var("RIDSER_SESSION_SECURE_COOKIE_DISABLED")
+        .unwrap_or_else(|_| String::new())
+        .to_lowercase()
+        != "true";
+    if !secure_cookie {
+        warn!("Disabling secure cookies is not recommended in production.");
+    }
+
     Ok(SessionSetup {
         cookie_name: env::var("RIDSER_SESSION_COOKIE_NAME")
             .unwrap_or_else(|_| "ridser.sid".to_string()),
         cookie_path: env::var("RIDSER_SESSION_COOKIE_PATH").unwrap_or_else(|_| "/".to_string()),
         secret: env::var("RIDSER_SESSION_SECRET").context("missing RIDSER_SESSION_SECRET")?,
         ttl: None,
+        secure_cookie,
     })
 }
 

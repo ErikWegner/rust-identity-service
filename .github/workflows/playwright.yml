@@ -15,7 +15,7 @@ jobs:
           docker compose -f .devcontainer/docker-compose.yml up -d
           docker compose -f .devcontainer/docker-compose.yml exec ridser /bin/bash -c "rustup update stable"
           docker exec -i --user ${UID}:${GID} --workdir /workspace  devcontainer-ridser-1 /bin/bash -c "cargo build"
-          docker exec -id --user ${UID}:${GID} --workdir /workspace  devcontainer-ridser-1 /bin/bash -c "cp .env.default .env ; cargo run"
+          docker exec -id --user ${UID}:${GID} --workdir /workspace  devcontainer-ridser-1 /bin/bash -c "cp .env.e2e-ci .env ; cargo run"
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*

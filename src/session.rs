@@ -18,6 +18,7 @@ pub(crate) struct SessionSetup {
     pub(crate) cookie_name: String,
     pub(crate) cookie_path: String,
     pub(crate) ttl: Option<Duration>,
+    pub(crate) secure_cookie: bool,
 }
 
 impl SessionSetup {
@@ -26,9 +27,9 @@ impl SessionSetup {
         let session_layer = SessionManagerLayer::new(store)
             .with_private(Key::from(self.secret.as_bytes()))
             .with_name(self.cookie_name.clone())
-            .with_secure(true)
+            .with_secure(self.secure_cookie)
             .with_path(self.cookie_path.clone())
-            .with_same_site(tower_sessions::cookie::SameSite::None)
+            .with_same_site(tower_sessions::cookie::SameSite::Strict)
             .with_expiry(Expiry::OnInactivity(
                 self.ttl.unwrap_or_else(|| Duration::hours(1)),
             ));
