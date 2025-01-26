@@ -5,6 +5,7 @@ services:
     ports:
       # Publish keycloak here, because network stack is shared
       - "8101:8101"
+      - "3000:3000"
     volumes:
       # Mount the root folder that contains .git
       - ..:/workspace:cached
@@ -17,7 +18,7 @@ services:
     image: erikwegner/rsecho:release-1.0.0
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0.0
+    image: quay.io/keycloak/keycloak:26.1.0
     command:
       - start-dev
       - --import-realm

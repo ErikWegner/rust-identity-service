@@ -8,7 +8,7 @@ use axum_macros::debug_handler;
 use reqwest::Url;
 use serde::Deserialize;
 use tower_sessions::Session;
-use tower_sessions_redis_store::fred::clients::RedisPool;
+use tower_sessions_redis_store::fred::clients::Pool;
 use tracing::{error, info};
 
 use crate::{
@@ -38,7 +38,7 @@ pub(crate) struct TokenExchangeData {
 
 pub(super) async fn callback_post_token_exchange(
     session: &Session,
-    pool: RedisPool,
+    pool: Pool,
     jwt: SessionTokens,
     userid: String,
 ) {
@@ -54,7 +54,7 @@ pub(super) async fn callback_post_token_exchange(
 #[debug_handler]
 pub(crate) async fn callback(
     Extension(oidc_client): Extension<OIDCClient>,
-    Extension(client): Extension<RedisPool>,
+    Extension(client): Extension<Pool>,
     session: Session,
     callback_query_params: Query<CallbackQueryParams>,
 ) -> Result<Response, Response> {
