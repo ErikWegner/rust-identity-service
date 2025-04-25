@@ -37,12 +37,13 @@ struct ExpFieldInJWT {
     pub(crate) exp: u64,
 }
 
-pub(crate) struct AuthorizeRequestData {
-    pub(crate) redirect_uri: String,
-    pub(crate) state: String,
-    pub(crate) scope: String,
-    pub(crate) prompt: Option<String>,
-    pub(crate) ui_locales: Option<String>,
+pub struct AuthorizeRequestData {
+    pub redirect_uri: String,
+    pub scope: String,
+    pub state: String,
+    pub ui_locales: Option<String>,
+    pub prompt: Option<String>,
+    pub kc_idp_hint: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -180,6 +181,9 @@ impl OIDCClient {
         }
         if let Some(ui_locale) = authorize_request.ui_locales {
             b = b.add_ui_locale(openidconnect::LanguageTag::new(ui_locale));
+        }
+        if let Some(kc_idp_hint) = authorize_request.kc_idp_hint {
+            b = b.add_extra_param("kc_idp_hint", kc_idp_hint);
         }
 
         let (auth_url, csrf_token, nonce) = b.url();

@@ -33,6 +33,8 @@ pub(crate) struct LoginQueryParams {
     ui_locales: Option<String>,
     #[serde(rename = "prompt")]
     prompt: Option<String>,
+    #[serde(rename = "kc_idp_hint")]
+    kc_idp_hint: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -94,6 +96,7 @@ pub(crate) async fn login(
             state,
             ui_locales: login_query_params.ui_locales.clone(),
             prompt: login_query_params.prompt.clone(),
+            kc_idp_hint: login_query_params.kc_idp_hint.clone(),
         })
         .await
         .map_err(|e| {
@@ -386,6 +389,40 @@ mod tests {
         assert!(
             url.contains("prompt=none"),
             "url should contain prompt: {}",
+            url
+        );
+    }
+
+    #[tokio::test]
+    async fn test_login_sends_redirect_with_kc_idp_hint() {
+        // Arrange
+        let m = MockSetup::new().await;
+        let app = m.router();
+
+        // Act
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid&state=xyz&kc_idp_hint=some-idp")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let url = response
+            .headers()
+            .get(LOCATION)
+            .expect("header value")
+            .to_str()
+            .expect("to str")
+            .split('?')
+            .last()
+            .expect("last");
+
+        // Assert
+        assert!(
+            url.contains("kc_idp_hint=some-idp"),
+            "url should contain kc_idp_hint: {}",
             url
         );
     }
