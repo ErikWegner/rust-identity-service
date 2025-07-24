@@ -462,6 +462,7 @@ mod tests {
                 cookie_path: "/".to_string(),
                 ttl: Some(time::Duration::new(300, 0)),
                 secure_cookie: true,
+                same_site: crate::SameSiteSetting::Strict,
             };
             let session_layer = session_setup
                 .get_session_layer(session_store.clone())

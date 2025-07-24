@@ -13,12 +13,39 @@ pub(crate) static SESSION_KEY_JWT: &str = "ridser_jwt";
 pub(crate) static SESSION_KEY_USERID: &str = "ridser_userid";
 
 #[derive(Debug, Clone)]
+pub(crate) enum SameSiteSetting {
+    None,
+    Lax,
+    Strict,
+}
+
+impl SameSiteSetting {
+    pub(crate) fn from_env_string(value: Option<String>) -> Self {
+        match value.as_deref() {
+            Some("none") => SameSiteSetting::None,
+            Some("lax") => SameSiteSetting::Lax,
+            Some("strict") => SameSiteSetting::Strict,
+            _ => SameSiteSetting::Strict, // Default to Strict if not set or invalid
+        }
+    }
+
+    pub(crate) fn to_tower_sessions_same_site(&self) -> tower_sessions::cookie::SameSite {
+        match self {
+            SameSiteSetting::None => tower_sessions::cookie::SameSite::None,
+            SameSiteSetting::Lax => tower_sessions::cookie::SameSite::Lax,
+            SameSiteSetting::Strict => tower_sessions::cookie::SameSite::Strict,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct SessionSetup {
     pub(crate) secret: String,
     pub(crate) cookie_name: String,
     pub(crate) cookie_path: String,
     pub(crate) ttl: Option<Duration>,
     pub(crate) secure_cookie: bool,
+    pub(crate) same_site: SameSiteSetting,
 }
 
 impl SessionSetup {
@@ -29,7 +56,7 @@ impl SessionSetup {
             .with_name(self.cookie_name.clone())
             .with_secure(self.secure_cookie)
             .with_path(self.cookie_path.clone())
-            .with_same_site(tower_sessions::cookie::SameSite::Strict)
+            .with_same_site(self.same_site.to_tower_sessions_same_site())
             .with_expiry(Expiry::OnInactivity(
                 self.ttl.unwrap_or_else(|| Duration::hours(1)),
             ));

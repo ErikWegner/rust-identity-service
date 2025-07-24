@@ -1,7 +1,7 @@
 use std::env;
 
 use anyhow::{Context, Result};
-use session::SessionSetup;
+use session::{SameSiteSetting, SessionSetup};
 use tokio::signal;
 use tracing::{debug, warn};
 
@@ -66,6 +66,9 @@ fn init_session_vars() -> Result<SessionSetup> {
         warn!("Disabling secure cookies is not recommended in production.");
     }
 
+    let same_site =
+        SameSiteSetting::from_env_string(env::var("RIDSER_SESSION_COOKIE_SAMESITE").ok());
+
     Ok(SessionSetup {
         cookie_name: env::var("RIDSER_SESSION_COOKIE_NAME")
             .unwrap_or_else(|_| "ridser.sid".to_string()),
@@ -73,6 +76,7 @@ fn init_session_vars() -> Result<SessionSetup> {
         secret: env::var("RIDSER_SESSION_SECRET").context("missing RIDSER_SESSION_SECRET")?,
         ttl: None,
         secure_cookie,
+        same_site,
     })
 }
 

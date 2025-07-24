@@ -1,5 +1,5 @@
 ## Build ridser binary
-FROM rust:1.84.0-alpine3.20 AS builder
+FROM rust:1.88.0-alpine3.22 AS builder
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 WORKDIR /usr/src
@@ -15,7 +15,7 @@ RUN cargo build --target x86_64-unknown-linux-musl --release
 RUN strip -s /usr/src/ridser/target/x86_64-unknown-linux-musl/release/ridser
 
 ## Final image
-FROM alpine:3.20 AS runtime
+FROM alpine:3.22 AS runtime
 ENV MIMALLOC_LARGE_OS_PAGES=1
 COPY --from=builder /usr/src/ridser/target/x86_64-unknown-linux-musl/release/ridser /
 EXPOSE 3000
