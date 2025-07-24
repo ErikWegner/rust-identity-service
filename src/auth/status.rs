@@ -84,11 +84,7 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(
-            status,
-            StatusCode::OK,
-            "response should be ok, but {body}"
-        );
+        assert_eq!(status, StatusCode::OK, "response should be ok, but {body}");
         let s: StatusResponse =
             serde_json::from_str(body.as_str()).expect("Body should deserialize");
         assert!(!s.authenticated, "Should not be authenticated");
@@ -125,11 +121,7 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(
-            status,
-            StatusCode::OK,
-            "response should be ok, but {body}"
-        );
+        assert_eq!(status, StatusCode::OK, "response should be ok, but {body}");
         let s: StatusResponse =
             serde_json::from_str(body.as_str()).expect("Body should deserialize");
         assert!(s.authenticated, "Should be authenticated");

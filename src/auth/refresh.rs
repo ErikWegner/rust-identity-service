@@ -154,10 +154,6 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(
-            status,
-            StatusCode::OK,
-            "response should be ok, but {body}"
-        );
+        assert_eq!(status, StatusCode::OK, "response should be ok, but {body}");
     }
 }
