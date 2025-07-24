@@ -134,8 +134,7 @@ impl OIDCClient {
             provider_metadata = provider_metadata.set_authorization_endpoint(
                 AuthUrl::new(authorization_endpoint_url.clone()).with_context(|| {
                     format!(
-                        "Authorization endpoint is not valid: {}",
-                        authorization_endpoint_url
+                        "Authorization endpoint is not valid: {authorization_endpoint_url}"
                     )
                 })?,
             );

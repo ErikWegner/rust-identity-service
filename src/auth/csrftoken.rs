@@ -62,11 +62,10 @@ mod tests {
         assert_eq!(
             status,
             StatusCode::OK,
-            "response should be ok, but {}",
-            body
+            "response should be ok, but {body}"
         );
         let c: CsrfTokenResponse = serde_json::from_str(&body).expect("Body should deserialize");
-        assert!(c.token.is_empty(), "token should be empty, but {}", body);
+        assert!(c.token.is_empty(), "token should be empty, but {body}");
     }
 
     #[tokio::test]
@@ -106,8 +105,7 @@ mod tests {
         assert_eq!(
             status,
             StatusCode::OK,
-            "response should be ok, but {}",
-            body
+            "response should be ok, but {body}"
         );
         let c: CsrfTokenResponse = serde_json::from_str(&body).expect("Body should deserialize");
         assert!(!c.token.is_empty(), "Token should not be empty");

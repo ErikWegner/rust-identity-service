@@ -87,8 +87,7 @@ mod tests {
         assert_eq!(
             status,
             StatusCode::OK,
-            "response should be ok, but {}",
-            body
+            "response should be ok, but {body}"
         );
         let s: StatusResponse =
             serde_json::from_str(body.as_str()).expect("Body should deserialize");
@@ -129,8 +128,7 @@ mod tests {
         assert_eq!(
             status,
             StatusCode::OK,
-            "response should be ok, but {}",
-            body
+            "response should be ok, but {body}"
         );
         let s: StatusResponse =
             serde_json::from_str(body.as_str()).expect("Body should deserialize");

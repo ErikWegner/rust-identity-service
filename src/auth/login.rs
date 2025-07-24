@@ -171,8 +171,7 @@ mod tests {
         assert_eq!(
             status,
             StatusCode::SEE_OTHER,
-            "response should be redirect, but {}",
-            body
+            "response should be redirect, but {body}"
         );
     }
 
@@ -271,8 +270,7 @@ mod tests {
             assert_eq!(
                 status,
                 StatusCode::BAD_REQUEST,
-                "Request should be denied, body was: {}",
-                body
+                "Request should be denied, body was: {body}"
             );
         }
     }
@@ -319,8 +317,7 @@ mod tests {
             assert_eq!(
                 status,
                 StatusCode::SEE_OTHER,
-                "response should be redirect, but {}",
-                body
+                "response should be redirect, but {body}"
             );
         }
     }
@@ -348,14 +345,13 @@ mod tests {
             .to_str()
             .expect("to str")
             .split('?')
-            .last()
+            .next_back()
             .expect("last");
 
         // Assert
         assert!(
             url.contains("ui_locales=de"),
-            "url should contain ui_locales: {}",
-            url
+            "url should contain ui_locales: {url}"
         );
     }
 
@@ -382,14 +378,13 @@ mod tests {
             .to_str()
             .expect("to str")
             .split('?')
-            .last()
+            .next_back()
             .expect("last");
 
         // Assert
         assert!(
             url.contains("prompt=none"),
-            "url should contain prompt: {}",
-            url
+            "url should contain prompt: {url}"
         );
     }
 
@@ -416,14 +411,13 @@ mod tests {
             .to_str()
             .expect("to str")
             .split('?')
-            .last()
+            .next_back()
             .expect("last");
 
         // Assert
         assert!(
             url.contains("kc_idp_hint=some-idp"),
-            "url should contain kc_idp_hint: {}",
-            url
+            "url should contain kc_idp_hint: {url}"
         );
     }
 }

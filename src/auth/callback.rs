@@ -187,8 +187,7 @@ mod tests {
         assert_eq!(
             status2,
             StatusCode::SEE_OTHER,
-            "response2 should be redirect, but {}",
-            body
+            "response2 should be redirect, but {body}"
         );
         let cookie2 = headers2.get(SET_COOKIE).unwrap();
         assert_ne!(

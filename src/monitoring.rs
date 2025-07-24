@@ -122,7 +122,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(status, StatusCode::OK, "Expected 200 OK, but {}", body);
+        assert_eq!(status, StatusCode::OK, "Expected 200 OK, but {body}");
         assert_eq!(body, "OK");
     }
 
@@ -155,8 +155,7 @@ mod tests {
         assert_eq!(
             status,
             StatusCode::SERVICE_UNAVAILABLE,
-            "Expected 503, but {}",
-            body
+            "Expected 503, but {body}"
         );
 
         assert_eq!(body, "Unhealthy");

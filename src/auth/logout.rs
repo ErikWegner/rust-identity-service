@@ -148,8 +148,7 @@ mod tests {
             assert_eq!(
                 status,
                 StatusCode::SEE_OTHER,
-                "response should be redirect, but {}",
-                body
+                "response should be redirect, but {body}"
             );
         }
     }
@@ -205,9 +204,7 @@ mod tests {
             assert_eq!(
                 status,
                 StatusCode::SEE_OTHER,
-                "Should be SEE OTHER for app_uri {}, body was {}",
-                app_uri,
-                body
+                "Should be SEE OTHER for app_uri {app_uri}, body was {body}"
             );
         }
     }
@@ -246,8 +243,7 @@ mod tests {
         assert_eq!(
             status,
             StatusCode::SEE_OTHER,
-            "response should be redirect, but {}",
-            body
+            "response should be redirect, but {body}"
         );
     }
 
@@ -312,8 +308,7 @@ mod tests {
         assert_eq!(
             status,
             StatusCode::SEE_OTHER,
-            "response should be redirect, but {}",
-            body
+            "response should be redirect, but {body}"
         );
         assert_eq!(
             Some(app_uri.to_string()),
@@ -322,8 +317,7 @@ mod tests {
         );
         assert!(
             cookie.contains("; Max-Age=0;"),
-            "Cookie should be marked to be expired, but {}",
-            cookie
+            "Cookie should be marked to be expired, but {cookie}"
         );
     }
 }

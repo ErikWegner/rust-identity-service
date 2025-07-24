@@ -157,8 +157,7 @@ mod tests {
         assert_eq!(
             status,
             StatusCode::OK,
-            "response should be ok, but {}",
-            body
+            "response should be ok, but {body}"
         );
     }
 }
