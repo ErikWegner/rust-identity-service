@@ -1,12 +1,15 @@
 import { test, expect } from '@playwright/test';
 import { configuration } from '../conf.ts';
 
-test('test', async ({ page }) => {
+test('test', async ({ context, page }) => {
   const conf = await configuration();
   await page.goto(conf.baseUrl + "/exampleapp/");
   await expect(page.getByText('This is the example app.')).toBeVisible();
   await expect(page.getByText('not authenticated')).toBeVisible();
   await page.getByRole('button', { name: 'Login' }).click();
+  const cookies = await context.cookies();
+  const cookienames = cookies.map(c => c.name);
+  expect(cookienames).toContain('ridser.sid');
   await page.getByRole('textbox', { name: 'Username or email' }).fill('user1');
   await page.getByRole('textbox', { name: 'Password' }).fill('user1');
   await page.getByRole('button', { name: 'Sign In' }).click();
