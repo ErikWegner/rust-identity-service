@@ -1,5 +1,5 @@
 ## Build ridser binary
-FROM rust:1.88.0-alpine3.22 AS builder
+FROM rust:1.89.0-alpine3.22 AS builder
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 WORKDIR /usr/src

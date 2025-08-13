@@ -178,7 +178,7 @@ pub(crate) fn auth_routes(
 }
 
 pub(crate) fn random_alphanumeric_string(length: usize) -> String {
-    rand::Rng::sample_iter(rand::thread_rng(), &rand::distributions::Alphanumeric)
+    rand::Rng::sample_iter(rand::rng(), &rand::distr::Alphanumeric)
         .take(length)
         .map(char::from)
         .collect::<String>()

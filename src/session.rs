@@ -21,11 +21,11 @@ pub(crate) enum SameSiteSetting {
 
 impl SameSiteSetting {
     pub(crate) fn from_env_string(value: Option<String>) -> Self {
-        match value.as_deref() {
+        match value.as_deref().map(|s| s.to_lowercase()).as_deref() {
             Some("none") => SameSiteSetting::None,
             Some("lax") => SameSiteSetting::Lax,
             Some("strict") => SameSiteSetting::Strict,
-            _ => SameSiteSetting::Strict, // Default to Strict if not set or invalid
+            _ => SameSiteSetting::None, // Default to None if not set or invalid
         }
     }
 

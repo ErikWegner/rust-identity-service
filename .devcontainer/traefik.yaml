@@ -1,0 +1,21 @@
+http:
+  routers:
+    keycloak:
+      rule: PathPrefix(`/`)
+      entryPoints:
+        - keycloak
+      service: keycloak
+    ridser:
+      rule: PathPrefix(`/`)
+      entryPoints:
+        - ridser
+      service: ridser
+  services:
+    keycloak:
+      loadBalancer:
+        servers:
+          - url: "http://ridser:8101"
+    ridser:
+      loadBalancer:
+        servers:
+          - url: "http://ridser:3000"

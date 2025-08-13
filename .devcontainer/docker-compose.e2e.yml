@@ -1,0 +1,32 @@
+services:
+  traefik:
+    image: traefik:v3.5
+    ports:
+      - "8101:8101"
+      - "3000:3000"
+    command:
+      - "--providers.file.filename=/routing.yaml"
+      # EntryPoints
+      - "--entrypoints.keycloak.address=:8101"
+      - "--entrypoints.keycloak.http.tls=true"
+      - "--entrypoints.ridser.address=:3000"
+      - "--entrypoints.ridser.http.tls=true"
+      # Observability
+      - "--log.level=DEBUG"
+      - "--accesslog=true"
+    volumes:
+      - ./traefik.yaml:/routing.yaml:ro
+    depends_on:
+      - ridser
+      - keycloak
+    networks:
+      default:
+        aliases:
+          - keycloak.localhost
+  ridser:
+    ports: !reset []
+  keycloak:
+    environment:
+      - KC_PROXY_HEADERS=xforwarded
+      - KC_HTTP_ENABLED=true
+      - KC_HOSTNAME=https://keycloak.localhost:8101/
