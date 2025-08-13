@@ -27,11 +27,9 @@ jobs:
       - name: Run Playwright tests
         working-directory: ./tests
         run: |
-          docker exec -id --user ${UID}:${GID} --workdir /workspace devcontainer-ridser-1 /bin/bash -c "cp .env.default .env ; cargo run"
+          docker exec -id --user ${UID}:${GID} --workdir /workspace devcontainer-ridser-1 /bin/bash -c "cp .env.e2e-ci .env ; cargo run"
           export PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report/firefox_chromium/
           npx playwright test --project firefox --project chromium
-          docker exec -id --user ${UID}:${GID} --workdir /workspace devcontainer-ridser-1 /bin/bash -c "killall ridser"
-          docker exec -id --user ${UID}:${GID} --workdir /workspace devcontainer-ridser-1 /bin/bash -c "cp .env.e2e-ci .env ; cargo run"
           export PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report/webkit/
           npx playwright test --project webkit
       - uses: actions/upload-artifact@v4
