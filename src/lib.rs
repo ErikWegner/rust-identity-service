@@ -9,7 +9,7 @@ use crate::{
     auth::{
         AppConfigurationState, LoginAppSettings, LogoutAppSettings, LogoutBehavior, OIDCClient,
     },
-    http::{app, ProxyConfig},
+    http::{ProxyConfig, app},
     session::redis_cons,
 };
 

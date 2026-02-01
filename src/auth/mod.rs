@@ -14,13 +14,13 @@ pub use logout::LogoutBehavior;
 pub use oidcclient::OIDCClient;
 
 use axum::{
+    Extension, Router,
     extract::FromRef,
     routing::{get, post},
-    Extension, Router,
 };
 
 use openidconnect::{
-    core::CoreIdToken, url::Url, AccessToken, CsrfToken, Nonce, PkceCodeVerifier, RefreshToken,
+    AccessToken, CsrfToken, Nonce, PkceCodeVerifier, RefreshToken, core::CoreIdToken, url::Url,
 };
 use serde::{Deserialize, Serialize};
 use tower::ServiceBuilder;
@@ -34,7 +34,7 @@ use self::{
     csrftoken::csrftoken,
     login::login,
     logout::logout,
-    refresh::{refresh, RefreshLockManager},
+    refresh::{RefreshLockManager, refresh},
     status::status,
 };
 
@@ -188,25 +188,25 @@ pub(crate) fn random_alphanumeric_string(length: usize) -> String {
 mod tests {
     use std::sync::Arc;
 
-    use axum::{body::Body, http::HeaderValue, Router};
+    use axum::{Router, body::Body, http::HeaderValue};
     use base64::prelude::*;
     use chrono::Utc;
     use http_body_util::BodyExt;
     use hyper::{
-        header::{COOKIE, LOCATION, SET_COOKIE},
         Request,
+        header::{COOKIE, LOCATION, SET_COOKIE},
     };
     use once_cell::sync::Lazy;
     use openidconnect::{
+        AccessToken, Audience, AuthUrl, EmptyAdditionalClaims, EmptyAdditionalProviderMetadata,
+        EmptyExtraTokenFields, EndUserEmail, IdToken, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl,
+        Nonce, PrivateSigningKey, RefreshToken, ResponseTypes, Scope, StandardClaims,
+        SubjectIdentifier, TokenUrl, UserInfoUrl,
         core::{
             CoreClaimName, CoreIdToken, CoreIdTokenClaims, CoreIdTokenFields, CoreJsonWebKeySet,
             CoreJwsSigningAlgorithm, CoreProviderMetadata, CoreResponseType,
             CoreRsaPrivateSigningKey, CoreSubjectIdentifierType, CoreTokenResponse, CoreTokenType,
         },
-        AccessToken, Audience, AuthUrl, EmptyAdditionalClaims, EmptyAdditionalProviderMetadata,
-        EmptyExtraTokenFields, EndUserEmail, IdToken, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl,
-        Nonce, PrivateSigningKey, RefreshToken, ResponseTypes, Scope, StandardClaims,
-        SubjectIdentifier, TokenUrl, UserInfoUrl,
     };
     use serde_json::json;
     use tower::{Service, ServiceExt};
@@ -214,16 +214,16 @@ mod tests {
     use tracing_log::LogTracer;
     use tracing_subscriber::filter::EnvFilter;
     use wiremock::{
-        matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
     };
 
-    use crate::session::{redis_cons, RidserSessionLayer, SessionSetup};
+    use crate::session::{RidserSessionLayer, SessionSetup, redis_cons};
 
     use super::{
-        auth_routes,
+        AppConfigurationState, LoginAppSettings, OIDCClient, auth_routes,
         logout::{LogoutAppSettings, LogoutBehavior},
-        random_alphanumeric_string, AppConfigurationState, LoginAppSettings, OIDCClient,
+        random_alphanumeric_string,
     };
 
     static GLOBAL_LOGGER_SETUP: Lazy<Arc<bool>> = Lazy::new(|| {

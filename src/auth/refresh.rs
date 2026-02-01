@@ -2,9 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use axum::{
+    Extension, Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Extension, Json,
 };
 use axum_macros::debug_handler;
 use tower_sessions::Session;
@@ -115,7 +115,7 @@ pub(crate) async fn refresh(
 
 #[cfg(test)]
 mod tests {
-    use axum::{body::Body, http::header::COOKIE, http::Request, http::StatusCode};
+    use axum::{body::Body, http::Request, http::StatusCode, http::header::COOKIE};
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 

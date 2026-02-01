@@ -25,7 +25,7 @@ pub(crate) async fn csrftoken(session: Session) -> Json<CsrfTokenResponse> {
 #[cfg(test)]
 mod tests {
     use crate::auth::{csrftoken::CsrfTokenResponse, tests::MockSetup};
-    use axum::{body::Body, http::header::COOKIE, http::Request, http::StatusCode};
+    use axum::{body::Body, http::Request, http::StatusCode, http::header::COOKIE};
     use http_body_util::BodyExt;
     use tower::{Service, ServiceExt};
 

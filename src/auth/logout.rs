@@ -98,8 +98,8 @@ mod tests {
     use axum::{
         body::Body,
         http::{
-            header::{COOKIE, LOCATION, SET_COOKIE},
             Request, StatusCode,
+            header::{COOKIE, LOCATION, SET_COOKIE},
         },
     };
     use http_body_util::BodyExt;
