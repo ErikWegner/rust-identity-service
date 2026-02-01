@@ -5,7 +5,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use axum_macros::debug_handler;
-use reqwest::Url;
+use oauth2::reqwest::Url;
 use serde::Deserialize;
 use tower_sessions::Session;
 use tower_sessions_redis_store::fred::clients::Pool;

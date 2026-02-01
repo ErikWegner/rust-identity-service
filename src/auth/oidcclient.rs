@@ -48,7 +48,7 @@ pub struct AuthorizeRequestData {
 
 #[derive(Debug, Clone)]
 pub struct OIDCClient {
-    http_client: reqwest::Client,
+    http_client: oauth2::reqwest::Client,
     client: CoreClient<
         EndpointSet,
         EndpointNotSet,
@@ -110,10 +110,10 @@ impl OIDCClient {
                 .unwrap_or_default()
                 .to_lowercase()
                 == "true";
-            reqwest::ClientBuilder::new()
+            oauth2::reqwest::ClientBuilder::new()
                 .danger_accept_invalid_certs(danger_accept_invalid_certs)
                 // Following redirects opens the client up to SSRF vulnerabilities.
-                .redirect(reqwest::redirect::Policy::none())
+                .redirect(oauth2::reqwest::redirect::Policy::none())
                 .build()
                 .context("Failed to create http client")?
         };
