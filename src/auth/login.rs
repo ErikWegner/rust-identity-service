@@ -1,9 +1,9 @@
 use anyhow::Result;
 use axum::{
+    Extension,
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
-    Extension,
 };
 use axum_macros::debug_handler;
 use serde::Deserialize;
@@ -13,8 +13,8 @@ use tracing::{debug, error, trace};
 
 use crate::{
     auth::{
-        oidcclient::AuthorizeRequestData, random_alphanumeric_string,
-        LoginCallbackSessionParameters,
+        LoginCallbackSessionParameters, oidcclient::AuthorizeRequestData,
+        random_alphanumeric_string,
     },
     session::purge_store_and_regenerate_session,
 };
@@ -128,8 +128,8 @@ mod tests {
     use axum::{
         body::Body,
         http::{
-            header::{COOKIE, LOCATION, SET_COOKIE},
             Request,
+            header::{COOKIE, LOCATION, SET_COOKIE},
         },
     };
     use http_body_util::BodyExt;
@@ -180,8 +180,7 @@ mod tests {
         // Arrange
         let m = MockSetup::new().await;
         let mut app = m.router();
-        let uri =
-            "/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid&state=xyz";
+        let uri = "/auth/login?app_uri=http://example.com&redirect_uri=http://example.com&scope=openid&state=xyz";
 
         // Act
         let request = Request::builder().uri(uri).body(Body::empty()).unwrap();

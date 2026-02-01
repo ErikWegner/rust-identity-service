@@ -2,8 +2,8 @@ use time::Duration;
 
 use anyhow::{Context, Result};
 use cookie::Key;
-use tower_sessions::{service::PrivateCookie, Expiry, Session, SessionManagerLayer};
-use tower_sessions_redis_store::{fred::prelude::*, RedisStore};
+use tower_sessions::{Expiry, Session, SessionManagerLayer, service::PrivateCookie};
+use tower_sessions_redis_store::{RedisStore, fred::prelude::*};
 use tracing::debug;
 
 pub(crate) type RidserSessionLayer = SessionManagerLayer<RedisStore<Pool>, PrivateCookie>;

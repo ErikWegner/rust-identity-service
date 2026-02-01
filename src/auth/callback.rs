@@ -1,11 +1,11 @@
 use axum::{
+    Extension,
     extract::Query,
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
-    Extension,
 };
 use axum_macros::debug_handler;
-use reqwest::Url;
+use oauth2::reqwest::Url;
 use serde::Deserialize;
 use tower_sessions::Session;
 use tower_sessions_redis_store::fred::clients::Pool;
@@ -14,12 +14,12 @@ use tracing::{error, info};
 use crate::{
     auth::{LoginCallbackSessionParameters, OIDCClient},
     session::{
-        purge_store_and_regenerate_session, SESSION_KEY_CSRF_TOKEN, SESSION_KEY_JWT,
-        SESSION_KEY_USERID,
+        SESSION_KEY_CSRF_TOKEN, SESSION_KEY_JWT, SESSION_KEY_USERID,
+        purge_store_and_regenerate_session,
     },
 };
 
-use super::{random_alphanumeric_string, SessionTokens};
+use super::{SessionTokens, random_alphanumeric_string};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CallbackQueryParams {
@@ -116,8 +116,8 @@ mod tests {
     use axum::{
         body::Body,
         http::{
-            header::{COOKIE, LOCATION, SET_COOKIE},
             Request,
+            header::{COOKIE, LOCATION, SET_COOKIE},
         },
     };
     use http_body_util::BodyExt; // for `collect`

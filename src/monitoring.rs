@@ -1,8 +1,8 @@
 use axum::{
+    Extension, Router,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
-    Extension, Router,
 };
 use tower_sessions_redis_store::fred::{clients::Pool, interfaces::ClientLike};
 use tracing::error;

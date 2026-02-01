@@ -4,16 +4,16 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use axum::{
+    Extension, Router,
     body::Body,
     http::{
-        header::{AUTHORIZATION, COOKIE, HOST},
         HeaderValue, Method, StatusCode, Uri,
+        header::{AUTHORIZATION, COOKIE, HOST},
     },
     response::{IntoResponse, Response},
     routing::delete,
-    Extension, Router,
 };
 use axum_extra::extract::CookieJar;
 use axum_macros::debug_handler;
@@ -25,7 +25,7 @@ use tower_sessions_redis_store::fred::clients::Pool;
 use tracing::{debug, error, warn};
 
 use crate::{
-    auth::{auth_routes, AppConfigurationState, OIDCClient, SessionTokens},
+    auth::{AppConfigurationState, OIDCClient, SessionTokens, auth_routes},
     monitoring::health_routes,
     session::{RidserSessionLayer, SESSION_KEY_CSRF_TOKEN, SESSION_KEY_JWT},
 };

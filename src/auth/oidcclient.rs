@@ -3,23 +3,23 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{anyhow, Context, Result};
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
-use oauth2::{basic::BasicTokenType, EndpointMaybeSet, EndpointNotSet, EndpointSet};
+use anyhow::{Context, Result, anyhow};
+use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD};
+use oauth2::{EndpointMaybeSet, EndpointNotSet, EndpointSet, basic::BasicTokenType};
 use openidconnect::{
-    core::{
-        CoreAuthenticationFlow, CoreClient, CoreGenderClaim, CoreJweContentEncryptionAlgorithm,
-        CoreJwsSigningAlgorithm, CoreProviderMetadata,
-    },
     AccessTokenHash, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
     EmptyAdditionalClaims, EmptyExtraTokenFields, IdTokenFields, IssuerUrl, Nonce,
     OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope,
     StandardTokenResponse, TokenResponse,
+    core::{
+        CoreAuthenticationFlow, CoreClient, CoreGenderClaim, CoreJweContentEncryptionAlgorithm,
+        CoreJwsSigningAlgorithm, CoreProviderMetadata,
+    },
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
-use super::{callback::TokenExchangeData, AuthorizeData, SessionTokens};
+use super::{AuthorizeData, SessionTokens, callback::TokenExchangeData};
 
 type KeycloakTokenResponse = StandardTokenResponse<
     IdTokenFields<
@@ -48,7 +48,7 @@ pub struct AuthorizeRequestData {
 
 #[derive(Debug, Clone)]
 pub struct OIDCClient {
-    http_client: reqwest::Client,
+    http_client: oauth2::reqwest::Client,
     client: CoreClient<
         EndpointSet,
         EndpointNotSet,
@@ -110,10 +110,10 @@ impl OIDCClient {
                 .unwrap_or_default()
                 .to_lowercase()
                 == "true";
-            reqwest::ClientBuilder::new()
+            oauth2::reqwest::ClientBuilder::new()
                 .danger_accept_invalid_certs(danger_accept_invalid_certs)
                 // Following redirects opens the client up to SSRF vulnerabilities.
-                .redirect(reqwest::redirect::Policy::none())
+                .redirect(oauth2::reqwest::redirect::Policy::none())
                 .build()
                 .context("Failed to create http client")?
         };
@@ -171,10 +171,10 @@ impl OIDCClient {
             .set_redirect_uri(Cow::Owned(RedirectUrl::new(
                 authorize_request.redirect_uri,
             )?));
-        if let Some(prompt) = authorize_request.prompt {
-            if prompt == "none" {
-                b = b.add_prompt(openidconnect::core::CoreAuthPrompt::None);
-            }
+        if let Some(prompt) = authorize_request.prompt
+            && prompt == "none"
+        {
+            b = b.add_prompt(openidconnect::core::CoreAuthPrompt::None);
         }
         if let Some(ui_locale) = authorize_request.ui_locales {
             b = b.add_ui_locale(openidconnect::LanguageTag::new(ui_locale));
