@@ -1,14 +1,14 @@
 [package]
 name = "ridser"
-version = "2.5.1"
-edition = "2021"
+version = "2.6.0"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 anyhow = "1.0.70"
 axum = "0.8.1"
-axum-extra = { version = "0.10.0", features = ["cookie"] }
+axum-extra = { version = "0.12.5", features = ["cookie"] }
 axum-macros = "0.5.0"
 base64 = "0.22.1"
 chrono = { version = "0.4.24", default-features = false }
