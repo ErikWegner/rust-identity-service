@@ -43,6 +43,7 @@ pub(crate) struct SessionSetup {
     pub(crate) secret: String,
     pub(crate) cookie_name: String,
     pub(crate) cookie_path: String,
+    pub(crate) cookie_domain: Option<String>,
     pub(crate) ttl: Option<Duration>,
     pub(crate) secure_cookie: bool,
     pub(crate) same_site: SameSiteSetting,
@@ -51,7 +52,7 @@ pub(crate) struct SessionSetup {
 impl SessionSetup {
     pub(crate) fn get_session_layer(&self, store: RedisStore<Pool>) -> Result<RidserSessionLayer> {
         debug!("📦 Preparing session");
-        let session_layer = SessionManagerLayer::new(store)
+        let mut session_layer = SessionManagerLayer::new(store)
             .with_private(Key::from(self.secret.as_bytes()))
             .with_name(self.cookie_name.clone())
             .with_secure(self.secure_cookie)
@@ -60,6 +61,10 @@ impl SessionSetup {
             .with_expiry(Expiry::OnInactivity(
                 self.ttl.unwrap_or_else(|| Duration::hours(1)),
             ));
+
+        if let Some(ref domain) = self.cookie_domain {
+            session_layer = session_layer.with_domain(domain.clone());
+        }
 
         Ok(session_layer)
     }

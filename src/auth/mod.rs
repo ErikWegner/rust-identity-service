@@ -1,5 +1,6 @@
 mod callback;
 mod csrftoken;
+mod forward;
 mod login;
 mod logout;
 mod oidcclient;
@@ -26,12 +27,14 @@ use serde::{Deserialize, Serialize};
 use tower::ServiceBuilder;
 use tower_sessions_redis_store::fred::clients::Pool;
 
+use crate::http::ProxyConfig;
 use crate::session::RidserSessionLayer;
 
 use self::logout::logout_callback;
 use self::{
     callback::callback,
     csrftoken::csrftoken,
+    forward::forward,
     login::login,
     logout::logout,
     refresh::{RefreshLockManager, refresh},
@@ -142,9 +145,18 @@ pub(crate) fn auth_routes(
     client: Pool,
     remaining_secs_threshold: u64,
     app_config: AppConfigurationState,
+    proxy_config: &ProxyConfig,
 ) -> Router {
     let rlm = RefreshLockManager::new(remaining_secs_threshold);
     Router::new()
+        .route(
+            "/forward",
+            get(forward).layer(
+                ServiceBuilder::new()
+                    .layer(session_layer.clone())
+                    .layer(Extension(proxy_config.clone())),
+            ),
+        )
         .route(
             "/login",
             get(login).layer(
@@ -218,7 +230,10 @@ mod tests {
         matchers::{method, path},
     };
 
-    use crate::session::{RidserSessionLayer, SessionSetup, redis_cons};
+    use crate::{
+        http::ProxyConfig,
+        session::{RidserSessionLayer, SessionSetup, redis_cons},
+    };
 
     use super::{
         AppConfigurationState, LoginAppSettings, OIDCClient, auth_routes,
@@ -460,6 +475,7 @@ mod tests {
                 secret: session_secret.clone(),
                 cookie_name: cookie_name.clone(),
                 cookie_path: "/".to_string(),
+                cookie_domain: None,
                 ttl: Some(time::Duration::new(300, 0)),
                 secure_cookie: true,
                 same_site: crate::SameSiteSetting::Strict,
@@ -496,6 +512,12 @@ mod tests {
                     ],
                 },
             };
+            let proxy_config = ProxyConfig::try_init(
+                "http://localhost:3000/api".to_string(),
+                &self.cookie_name,
+                vec![],
+            )
+            .expect("Proxy setup failed for mock setup");
             Router::new().nest(
                 "/auth",
                 auth_routes(
@@ -504,6 +526,7 @@ mod tests {
                     redis_pool,
                     20,
                     app_config,
+                    &proxy_config,
                 ),
             )
         }

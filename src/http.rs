@@ -46,7 +46,7 @@ pub(crate) struct ExtraProxyRoute {
 #[derive(Debug, Clone)]
 pub(crate) struct ProxyConfig {
     base_url: String,
-    cookie_name: String,
+    pub(crate) cookie_name: String,
     extra_routes: Vec<ExtraProxyRoute>,
 }
 
@@ -293,6 +293,7 @@ pub(crate) fn app(
                 client.clone(),
                 remaining_secs_threshold,
                 app_config,
+                proxy_config,
             ),
         );
 

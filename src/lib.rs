@@ -69,10 +69,13 @@ fn init_session_vars() -> Result<SessionSetup> {
     let same_site =
         SameSiteSetting::from_env_string(env::var("RIDSER_SESSION_COOKIE_SAMESITE").ok());
 
+    let cookie_domain = env::var("RIDSER_SESSION_COOKIE_DOMAIN").ok();
+
     Ok(SessionSetup {
         cookie_name: env::var("RIDSER_SESSION_COOKIE_NAME")
             .unwrap_or_else(|_| "ridser.sid".to_string()),
         cookie_path: env::var("RIDSER_SESSION_COOKIE_PATH").unwrap_or_else(|_| "/".to_string()),
+        cookie_domain,
         secret: env::var("RIDSER_SESSION_SECRET").context("missing RIDSER_SESSION_SECRET")?,
         ttl: None,
         secure_cookie,
