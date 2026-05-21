@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, sync::Arc};
 
 use anyhow::{Context, Result};
 use session::{SameSiteSetting, SessionSetup};
@@ -132,7 +132,7 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
     let app = app(
         oidc_client,
         &session_layer,
-        &proxy_config,
+        Arc::new(proxy_config),
         client,
         remaining_secs_threshold,
         app_config,

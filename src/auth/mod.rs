@@ -7,6 +7,7 @@ mod oidcclient;
 mod refresh;
 mod status;
 
+use std::sync::Arc;
 use std::time::SystemTime;
 
 pub use login::LoginAppSettings;
@@ -19,7 +20,6 @@ use axum::{
     extract::FromRef,
     routing::{get, post},
 };
-
 use openidconnect::{
     AccessToken, CsrfToken, Nonce, PkceCodeVerifier, RefreshToken, core::CoreIdToken, url::Url,
 };
@@ -146,17 +146,15 @@ pub(crate) fn auth_routes(
     client: Pool,
     remaining_secs_threshold: u64,
     app_config: AppConfigurationState,
-    proxy_config: &ProxyConfig,
+    proxy_config: Arc<ProxyConfig>,
 ) -> Router {
     let rlm = RefreshLockManager::new(remaining_secs_threshold);
     Router::new()
         .route(
             "/forward",
-            get(forward).layer(
-                ServiceBuilder::new()
-                    .layer(session_layer.clone())
-                    .layer(Extension(proxy_config.clone())),
-            ),
+            get(forward)
+                .with_state(proxy_config)
+                .layer(ServiceBuilder::new().layer(session_layer.clone())),
         )
         .route(
             "/login",
@@ -528,7 +526,7 @@ mod tests {
                     redis_pool,
                     20,
                     app_config,
-                    &proxy_config,
+                    Arc::new(proxy_config),
                 ),
             )
         }
