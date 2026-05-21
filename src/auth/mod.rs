@@ -23,6 +23,7 @@ use axum::{
 use openidconnect::{
     AccessToken, CsrfToken, Nonce, PkceCodeVerifier, RefreshToken, core::CoreIdToken, url::Url,
 };
+use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use tower::ServiceBuilder;
 use tower_sessions_redis_store::fred::clients::Pool;
@@ -190,7 +191,8 @@ pub(crate) fn auth_routes(
 }
 
 pub(crate) fn random_alphanumeric_string(length: usize) -> String {
-    rand::Rng::sample_iter(rand::rng(), &rand::distr::Alphanumeric)
+    rand::rng()
+        .sample_iter(rand::distr::Alphanumeric)
         .take(length)
         .map(char::from)
         .collect::<String>()
