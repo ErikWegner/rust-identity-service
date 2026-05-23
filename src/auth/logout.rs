@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -30,7 +32,7 @@ pub(crate) struct LogoutQueryParams {
     redirect_uri: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct LogoutAppSettings {
     pub(crate) client_id: String,
     pub(crate) logout_uri: String,
@@ -47,14 +49,14 @@ impl LogoutAppSettings {
 
 #[debug_handler]
 pub(crate) async fn logout(
-    State(logout_app_settings): State<LogoutAppSettings>,
+    State(logout_app_settings): State<Arc<LogoutAppSettings>>,
     session: Session,
     logout_query_params: Query<LogoutQueryParams>,
 ) -> Response {
     let _ = session
         .insert("ridser_logout_app_uri", logout_query_params.app_uri.clone())
         .await;
-    let logout_uri = logout_app_settings.logout_uri;
+    let logout_uri = &logout_app_settings.logout_uri;
     let session_tokens: Option<SessionTokens> = session.get(SESSION_KEY_JWT).await.unwrap_or(None);
     let id_token = session_tokens.map(|st| st.id_token).unwrap_or_default();
     let post_logout_redirect_uri = logout_query_params.redirect_uri.clone();
@@ -74,7 +76,7 @@ pub(crate) async fn logout(
 
 #[debug_handler]
 pub(crate) async fn logout_callback(
-    State(logout_app_settings): State<LogoutAppSettings>,
+    State(logout_app_settings): State<Arc<LogoutAppSettings>>,
     session: Session,
 ) -> Response {
     let app_uri = session

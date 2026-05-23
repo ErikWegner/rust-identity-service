@@ -14,9 +14,10 @@ pub use login::LoginAppSettings;
 pub use logout::LogoutAppSettings;
 pub use logout::LogoutBehavior;
 pub use oidcclient::OIDCClient;
+pub(crate) use refresh::RefreshLockManager;
 
 use axum::{
-    Extension, Router,
+    Router,
     extract::FromRef,
     routing::{get, post},
 };
@@ -28,18 +29,16 @@ use serde::{Deserialize, Serialize};
 use tower::ServiceBuilder;
 use tower_sessions_redis_store::fred::clients::Pool;
 
+use crate::auth::callback::CallbackState;
+use crate::auth::login::LoginState;
+use crate::auth::refresh::RefreshState;
 use crate::http::ProxyConfig;
 use crate::session::RidserSessionLayer;
 
 use self::logout::logout_callback;
 use self::{
-    callback::callback,
-    csrftoken::csrftoken,
-    forward::forward,
-    login::login,
-    logout::logout,
-    refresh::{RefreshLockManager, refresh},
-    status::status,
+    callback::callback, csrftoken::csrftoken, forward::forward, login::login, logout::logout,
+    refresh::refresh, status::status,
 };
 
 #[derive(Debug, Clone)]
@@ -124,31 +123,57 @@ pub(crate) struct LoginCallbackSessionParameters {
 
 #[derive(Clone)]
 pub(crate) struct AppConfigurationState {
-    pub(crate) login_app_settings: LoginAppSettings,
-    pub(crate) logout_app_settings: LogoutAppSettings,
+    pub(crate) login_app_settings: Arc<LoginAppSettings>,
+    pub(crate) logout_app_settings: Arc<LogoutAppSettings>,
+    pub(crate) oidc_client: Arc<OIDCClient>,
+    pub(crate) client: Pool,
+    pub(crate) refresh_lock_manager: Arc<RefreshLockManager>,
 }
 
-impl FromRef<AppConfigurationState> for LoginAppSettings {
+impl FromRef<AppConfigurationState> for Arc<LoginAppSettings> {
     fn from_ref(app_state: &AppConfigurationState) -> Self {
         app_state.login_app_settings.clone()
     }
 }
 
-impl FromRef<AppConfigurationState> for LogoutAppSettings {
-    fn from_ref(app_state: &AppConfigurationState) -> LogoutAppSettings {
+impl FromRef<AppConfigurationState> for Arc<LogoutAppSettings> {
+    fn from_ref(app_state: &AppConfigurationState) -> Self {
         app_state.logout_app_settings.clone()
     }
 }
 
+impl FromRef<AppConfigurationState> for LoginState {
+    fn from_ref(app_state: &AppConfigurationState) -> Self {
+        Self {
+            login_app_settings: app_state.login_app_settings.clone(),
+            oidc_client: app_state.oidc_client.clone(),
+            client: app_state.client.clone(),
+        }
+    }
+}
+
+impl FromRef<AppConfigurationState> for CallbackState {
+    fn from_ref(app_state: &AppConfigurationState) -> Self {
+        Self {
+            oidc_client: app_state.oidc_client.clone(),
+            client: app_state.client.clone(),
+        }
+    }
+}
+
+impl FromRef<AppConfigurationState> for RefreshState {
+    fn from_ref(app_state: &AppConfigurationState) -> Self {
+        Self {
+            refresh_lock: app_state.refresh_lock_manager.clone(),
+            client: app_state.oidc_client.clone(),
+        }
+    }
+}
 pub(crate) fn auth_routes(
-    oidc_client: OIDCClient,
     session_layer: &RidserSessionLayer,
-    client: Pool,
-    remaining_secs_threshold: u64,
     app_config: AppConfigurationState,
     proxy_config: Arc<ProxyConfig>,
 ) -> Router {
-    let rlm = RefreshLockManager::new(remaining_secs_threshold);
     Router::new()
         .route(
             "/forward",
@@ -156,30 +181,9 @@ pub(crate) fn auth_routes(
                 .with_state(proxy_config)
                 .layer(ServiceBuilder::new().layer(session_layer.clone())),
         )
-        .route(
-            "/login",
-            get(login).layer(
-                ServiceBuilder::new()
-                    .layer(Extension(oidc_client.clone()))
-                    .layer(Extension(client.clone())),
-            ),
-        )
-        .route(
-            "/callback",
-            get(callback).layer(
-                ServiceBuilder::new()
-                    .layer(Extension(oidc_client.clone()))
-                    .layer(Extension(client.clone())),
-            ),
-        )
-        .route(
-            "/refresh",
-            post(refresh).layer(
-                ServiceBuilder::new()
-                    .layer(Extension(rlm))
-                    .layer(Extension(oidc_client)),
-            ),
-        )
+        .route("/login", get(login))
+        .route("/callback", get(callback))
+        .route("/refresh", post(refresh))
         .route("/csrftoken", post(csrftoken))
         .route("/status", get(status))
         .route("/logout", get(logout))
@@ -231,6 +235,7 @@ mod tests {
     };
 
     use crate::{
+        auth::refresh::RefreshLockManager,
         http::ProxyConfig,
         session::{RidserSessionLayer, SessionSetup, redis_cons},
     };
@@ -429,7 +434,7 @@ mod tests {
         cookie_name: String,
         issuer_url: String,
         mock_server: MockServer,
-        oidc_client: OIDCClient,
+        oidc_client: Arc<OIDCClient>,
         redis_pool: Pool,
         session_layer: RidserSessionLayer,
     }
@@ -458,10 +463,11 @@ mod tests {
                 .mount(&mock_server)
                 .await;
             let auth_url = format!("{}/authorize", mock_server.uri());
-            let oidc_client =
+            let oidc_client = Arc::new(
                 OIDCClient::build(&issuer_url, &client_id, &client_secret, Some(auth_url))
                     .await
-                    .expect("OIDCClient creation failed");
+                    .expect("OIDCClient creation failed"),
+            );
 
             let session_secret: String = random_alphanumeric_string(64);
             let (session_store, redis_pool) = redis_cons(
@@ -498,11 +504,11 @@ mod tests {
         pub fn router(&self) -> Router {
             let redis_pool = self.redis_pool.clone();
             let app_config = AppConfigurationState {
-                login_app_settings: LoginAppSettings::new(vec![
+                login_app_settings: Arc::new(LoginAppSettings::new(vec![
                     "http://example.com".to_string(),
                     "http://example.org/my/app/*".to_string(),
-                ]),
-                logout_app_settings: LogoutAppSettings {
+                ])),
+                logout_app_settings: Arc::new(LogoutAppSettings {
                     client_id: self.client_id.clone(),
                     logout_uri: format!("{}/logout", self.mock_server.uri()),
                     _behavior: LogoutBehavior::FrontChannelLogoutWithIdToken,
@@ -510,7 +516,10 @@ mod tests {
                         "http://logout.example.com".to_string(),
                         "http://example.org/it/index".to_string(),
                     ],
-                },
+                }),
+                oidc_client: self.oidc_client.clone(),
+                client: redis_pool.clone(),
+                refresh_lock_manager: Arc::new(RefreshLockManager::new(600)),
             };
             let proxy_config = ProxyConfig::try_init(
                 "http://localhost:3000/api".to_string(),
@@ -520,14 +529,7 @@ mod tests {
             .expect("Proxy setup failed for mock setup");
             Router::new().nest(
                 "/auth",
-                auth_routes(
-                    self.oidc_client.clone(),
-                    &self.session_layer,
-                    redis_pool,
-                    20,
-                    app_config,
-                    Arc::new(proxy_config),
-                ),
+                auth_routes(&self.session_layer, app_config, Arc::new(proxy_config)),
             )
         }
 

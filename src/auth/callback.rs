@@ -1,6 +1,7 @@
+use std::sync::Arc;
+
 use axum::{
-    Extension,
-    extract::Query,
+    extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
@@ -51,10 +52,15 @@ pub(super) async fn callback_post_token_exchange(
     let _ = session.insert(SESSION_KEY_USERID, userid).await;
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct CallbackState {
+    pub(super) oidc_client: Arc<OIDCClient>,
+    pub(super) client: Pool,
+}
+
 #[debug_handler]
 pub(crate) async fn callback(
-    Extension(oidc_client): Extension<OIDCClient>,
-    Extension(client): Extension<Pool>,
+    State(callback_state): State<CallbackState>,
     session: Session,
     callback_query_params: Query<CallbackQueryParams>,
 ) -> Result<Response, Response> {
@@ -91,7 +97,8 @@ pub(crate) async fn callback(
         };
     }
 
-    let (jwt, userid) = oidc_client
+    let (jwt, userid) = callback_state
+        .oidc_client
         .exchange_code(TokenExchangeData {
             code: callback_query_params.code.clone().unwrap_or_default(),
             nonce: login_callback_session_params.nonce,
@@ -104,7 +111,7 @@ pub(crate) async fn callback(
             (StatusCode::UNAUTHORIZED, "Login failure").into_response()
         })?;
 
-    callback_post_token_exchange(&session, client, jwt, userid).await;
+    callback_post_token_exchange(&session, callback_state.client, jwt, userid).await;
 
     Ok(Redirect::to(&login_callback_session_params.app_uri).into_response())
 }

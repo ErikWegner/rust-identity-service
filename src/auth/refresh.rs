@@ -2,7 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use axum::{
-    Extension, Json,
+    Json,
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -17,16 +18,16 @@ use crate::{
 
 use super::OIDCClient;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct RefreshLockManager {
-    inner: Arc<Mutex<Vec<String>>>,
+    inner: Mutex<Vec<String>>,
     remaining_secs_threshold: u64,
 }
 
 impl RefreshLockManager {
     pub(crate) fn new(remaining_secs_threshold: u64) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(vec![])),
+            inner: (Mutex::new(vec![])),
             remaining_secs_threshold,
         }
     }
@@ -48,10 +49,15 @@ impl RefreshLockManager {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct RefreshState {
+    pub(crate) refresh_lock: Arc<RefreshLockManager>,
+    pub(crate) client: Arc<OIDCClient>,
+}
+
 #[debug_handler]
 pub(crate) async fn refresh(
-    Extension(refresh_lock): Extension<RefreshLockManager>,
-    Extension(client): Extension<OIDCClient>,
+    State(refresh_state): State<RefreshState>,
     session: Session,
 ) -> Result<Response, Response> {
     let userid = session
@@ -63,6 +69,7 @@ pub(crate) async fn refresh(
             (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
         })?;
 
+    let refresh_lock = refresh_state.refresh_lock.clone();
     if refresh_lock.user_is_refreshing(&userid) {
         return Err((StatusCode::CONFLICT, "Refresh pending...").into_response());
     }
@@ -88,7 +95,10 @@ pub(crate) async fn refresh(
     let response = tokio::spawn(async move {
         refresh_lock.set_user_is_refreshing(&userid);
 
-        let jwt = client.refresh_token(refresh_token.as_str()).await;
+        let jwt = refresh_state
+            .client
+            .refresh_token(refresh_token.as_str())
+            .await;
         let response = match jwt {
             Ok(jwt) => {
                 let _ = session.insert(SESSION_KEY_JWT, jwt).await;

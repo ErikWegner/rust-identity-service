@@ -27,7 +27,7 @@ use tower_sessions_redis_store::fred::clients::Pool;
 use tracing::{debug, error, warn};
 
 use crate::{
-    auth::{AppConfigurationState, OIDCClient, SessionTokens, auth_routes},
+    auth::{AppConfigurationState, SessionTokens, auth_routes},
     monitoring::health_routes,
     session::{RidserSessionLayer, SESSION_KEY_CSRF_TOKEN, SESSION_KEY_JWT},
 };
@@ -276,11 +276,9 @@ async fn proxy(
 }
 
 pub(crate) fn app(
-    oidc_client: OIDCClient,
     session_layer: &RidserSessionLayer,
     proxy_config: Arc<ProxyConfig>,
     client: Pool,
-    remaining_secs_threshold: u64,
     app_config: AppConfigurationState,
 ) -> Result<Router> {
     let spa_apps = walk_dir("files")?;
@@ -289,14 +287,7 @@ pub(crate) fn app(
         .nest("/app", health_routes(client.clone()))
         .nest(
             "/auth",
-            auth_routes(
-                oidc_client,
-                session_layer,
-                client.clone(),
-                remaining_secs_threshold,
-                app_config,
-                proxy_config,
-            ),
+            auth_routes(session_layer, app_config, proxy_config),
         );
 
     for spa_app in spa_apps {
