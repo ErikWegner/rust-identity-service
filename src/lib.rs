@@ -7,8 +7,8 @@ use tracing::{debug, warn};
 
 use crate::{
     auth::{
-        AppConfigurationState, LoginAppSettings, LogoutAppSettings, LogoutBehavior, OIDCClient,
-        RefreshLockManager,
+        AppConfigurationState, ForwardAuthState, LoginAppSettings, LogoutAppSettings,
+        LogoutBehavior, OIDCClient, RefreshLockManager,
     },
     http::{ProxyConfig, app},
     session::redis_cons,
@@ -131,6 +131,9 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
         oidc_client: oidc_client.clone(),
         client: client.clone(),
         refresh_lock_manager: Arc::new(RefreshLockManager::new(remaining_secs_threshold)),
+        forward_auth_state: Arc::new(ForwardAuthState {
+            cookie_name: session_setup.cookie_name().to_string(),
+        }),
     };
 
     let app = app(&session_layer, Arc::new(proxy_config), client, app_config);

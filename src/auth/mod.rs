@@ -1,20 +1,5 @@
-mod callback;
-mod csrftoken;
-mod forward;
-mod login;
-mod logout;
-mod oidcclient;
-mod refresh;
-mod status;
-
 use std::sync::Arc;
 use std::time::SystemTime;
-
-pub use login::LoginAppSettings;
-pub use logout::LogoutAppSettings;
-pub use logout::LogoutBehavior;
-pub use oidcclient::OIDCClient;
-pub(crate) use refresh::RefreshLockManager;
 
 use axum::{
     Router,
@@ -26,19 +11,32 @@ use openidconnect::{
 };
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
-use tower::ServiceBuilder;
 use tower_sessions_redis_store::fred::clients::Pool;
+
+mod callback;
+mod csrftoken;
+mod forwardauth;
+mod login;
+mod logout;
+mod oidcclient;
+mod refresh;
+mod status;
 
 use crate::auth::callback::CallbackState;
 use crate::auth::login::LoginState;
 use crate::auth::refresh::RefreshState;
-use crate::http::ProxyConfig;
 use crate::session::RidserSessionLayer;
+pub(crate) use forwardauth::ForwardAuthState;
+pub(crate) use login::LoginAppSettings;
+pub(crate) use logout::LogoutAppSettings;
+pub(crate) use logout::LogoutBehavior;
+pub(crate) use oidcclient::OIDCClient;
+pub(crate) use refresh::RefreshLockManager;
 
 use self::logout::logout_callback;
 use self::{
-    callback::callback, csrftoken::csrftoken, forward::forward, login::login, logout::logout,
-    refresh::refresh, status::status,
+    callback::callback, csrftoken::csrftoken, forwardauth::forwardauth, login::login,
+    logout::logout, refresh::refresh, status::status,
 };
 
 #[derive(Debug, Clone)]
@@ -128,6 +126,7 @@ pub(crate) struct AppConfigurationState {
     pub(crate) oidc_client: Arc<OIDCClient>,
     pub(crate) client: Pool,
     pub(crate) refresh_lock_manager: Arc<RefreshLockManager>,
+    pub(crate) forward_auth_state: Arc<ForwardAuthState>,
 }
 
 impl FromRef<AppConfigurationState> for Arc<LoginAppSettings> {
@@ -169,18 +168,18 @@ impl FromRef<AppConfigurationState> for RefreshState {
         }
     }
 }
+
+impl FromRef<AppConfigurationState> for Arc<ForwardAuthState> {
+    fn from_ref(app_state: &AppConfigurationState) -> Self {
+        app_state.forward_auth_state.clone()
+    }
+}
 pub(crate) fn auth_routes(
     session_layer: &RidserSessionLayer,
     app_config: AppConfigurationState,
-    proxy_config: Arc<ProxyConfig>,
 ) -> Router {
     Router::new()
-        .route(
-            "/forward",
-            get(forward)
-                .with_state(proxy_config)
-                .layer(ServiceBuilder::new().layer(session_layer.clone())),
-        )
+        .route("/auth", get(forwardauth))
         .route("/login", get(login))
         .route("/callback", get(callback))
         .route("/refresh", post(refresh))
@@ -235,8 +234,7 @@ mod tests {
     };
 
     use crate::{
-        auth::refresh::RefreshLockManager,
-        http::ProxyConfig,
+        auth::{ForwardAuthState, refresh::RefreshLockManager},
         session::{RidserSessionLayer, SessionSetup, redis_cons},
     };
 
@@ -520,17 +518,11 @@ mod tests {
                 oidc_client: self.oidc_client.clone(),
                 client: redis_pool.clone(),
                 refresh_lock_manager: Arc::new(RefreshLockManager::new(600)),
+                forward_auth_state: Arc::new(ForwardAuthState {
+                    cookie_name: self.cookie_name.clone(),
+                }),
             };
-            let proxy_config = ProxyConfig::try_init(
-                "http://localhost:3000/api".to_string(),
-                &self.cookie_name,
-                vec![],
-            )
-            .expect("Proxy setup failed for mock setup");
-            Router::new().nest(
-                "/auth",
-                auth_routes(&self.session_layer, app_config, Arc::new(proxy_config)),
-            )
+            Router::new().nest("/auth", auth_routes(&self.session_layer, app_config))
         }
 
         pub async fn setup_id_token_nonce(&self, header: &HeaderValue) {

@@ -68,6 +68,10 @@ impl SessionSetup {
 
         Ok(session_layer)
     }
+
+    pub(crate) fn cookie_name(&self) -> &str {
+        &self.cookie_name
+    }
 }
 
 pub(crate) async fn redis_cons(connection_url: &str) -> Result<(RedisStore<Pool>, Pool)> {

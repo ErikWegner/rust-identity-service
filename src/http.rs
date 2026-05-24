@@ -285,10 +285,7 @@ pub(crate) fn app(
     let mut app = Router::new()
         .nest("/api", api_proxy(session_layer, proxy_config.clone())?)
         .nest("/app", health_routes(client.clone()))
-        .nest(
-            "/auth",
-            auth_routes(session_layer, app_config, proxy_config),
-        );
+        .nest("/auth", auth_routes(session_layer, app_config));
 
     for spa_app in spa_apps {
         let components: Vec<_> = spa_app

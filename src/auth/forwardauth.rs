@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use axum::{
-    Extension,
+    extract::State,
     http::{
-        HeaderValue, Method, StatusCode, header,
-        header::{AUTHORIZATION, COOKIE},
+        HeaderValue, Method, StatusCode,
+        header::{self, AUTHORIZATION, COOKIE},
     },
     response::{IntoResponse, Response},
 };
@@ -13,13 +15,17 @@ use tracing::{debug, error};
 
 use crate::{
     auth::SessionTokens,
-    http::{HEADER_KEY_CSRF_TOKEN, ProxyConfig},
+    http::HEADER_KEY_CSRF_TOKEN,
     session::{SESSION_KEY_CSRF_TOKEN, SESSION_KEY_JWT},
 };
 
+pub(crate) struct ForwardAuthState {
+    pub(crate) cookie_name: String,
+}
+
 #[debug_handler]
-pub(crate) async fn forward(
-    Extension(proxy_config): Extension<ProxyConfig>,
+pub(crate) async fn forwardauth(
+    State(forwardauth_config): State<Arc<ForwardAuthState>>,
     session: Session,
     jar: CookieJar,
     req: axum::extract::Request,
@@ -37,7 +43,7 @@ pub(crate) async fn forward(
         }
     }
 
-    let needle = proxy_config.cookie_name.as_str();
+    let needle = forwardauth_config.cookie_name.as_str();
     let remaining_cookies = jar
         .iter()
         // Filter out cookies that are not valid for the proxy
