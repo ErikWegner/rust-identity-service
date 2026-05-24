@@ -10,6 +10,13 @@ pub(crate) struct CsrfTokenResponse {
     token: String,
 }
 
+#[cfg(test)]
+impl CsrfTokenResponse {
+    pub(crate) fn token(&self) -> &str {
+        &self.token
+    }
+}
+
 #[debug_handler]
 pub(crate) async fn csrftoken(session: Session) -> Json<CsrfTokenResponse> {
     let session_csrf_token: String = session

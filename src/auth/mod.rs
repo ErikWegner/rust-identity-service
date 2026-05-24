@@ -179,7 +179,7 @@ pub(crate) fn auth_routes(
     app_config: AppConfigurationState,
 ) -> Router {
     Router::new()
-        .route("/auth", get(forwardauth))
+        .route("/", get(forwardauth))
         .route("/login", get(login))
         .route("/callback", get(callback))
         .route("/refresh", post(refresh))
@@ -234,7 +234,7 @@ mod tests {
     };
 
     use crate::{
-        auth::{ForwardAuthState, refresh::RefreshLockManager},
+        auth::{ForwardAuthState, csrftoken::CsrfTokenResponse, refresh::RefreshLockManager},
         session::{RidserSessionLayer, SessionSetup, redis_cons},
     };
 
@@ -673,6 +673,37 @@ mod tests {
             );
 
             authenticated_cookie.to_string()
+        }
+
+        pub async fn get_csrf_token(&self, app: &mut Router, session_cookie: &str) -> String {
+            let csrf_token_request = Request::builder()
+                .method("POST")
+                .uri("/auth/csrftoken")
+                .header(COOKIE, session_cookie)
+                .body(Body::empty())
+                .unwrap();
+            let response = ServiceExt::<Request<Body>>::ready(app)
+                .await
+                .unwrap()
+                .call(csrf_token_request)
+                .await
+                .unwrap();
+            let status = response.status();
+            let body = String::from_utf8(
+                response
+                    .into_body()
+                    .collect()
+                    .await
+                    .expect("collect")
+                    .to_bytes()
+                    .to_vec(),
+            )
+            .unwrap();
+            assert_eq!(status, 200, "get_csrf_token: {body}");
+            assert_ne!(body.len(), 0, "Empty get_csrf_token");
+            let t: CsrfTokenResponse =
+                serde_json::from_str(body.as_str()).expect("CsrfTokenResponse deserialize");
+            t.token().to_string()
         }
     }
 }
