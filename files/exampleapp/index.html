@@ -15,6 +15,10 @@
 
         #echoresponse {
             font-size: 50%;
+            word-break: break-word;
+            br {
+                margin-bottom: 1ex;
+            }
         }
     </style>
 </head>
@@ -41,6 +45,7 @@
             <button id="refresh" type="button">Refresh</button>
             <button id="requestcsrftoken" type="button">CSRF-Token</button>
             <button id="echorequest" type="button">Echo request</button>
+            <button id="forwardauthrequest" type="button">Forward auth request</button> <a class="help" href="https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/forwardauth/">?</a>
         </p>
     </div>
     <p>
