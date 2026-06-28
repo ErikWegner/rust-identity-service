@@ -282,9 +282,11 @@ pub(crate) fn app(
     app_config: AppConfigurationState,
 ) -> Result<Router> {
     let spa_apps = walk_dir("files")?;
+
+    let mut app_health = health_routes(client.clone());
+
     let mut app = Router::new()
         .nest("/api", api_proxy(session_layer, proxy_config.clone())?)
-        .nest("/app", health_routes(client.clone()))
         .nest("/auth", auth_routes(session_layer, app_config));
 
     for spa_app in spa_apps {
@@ -305,11 +307,15 @@ pub(crate) fn app(
         let serve_dir = ServeDir::new(fs_path).not_found_service(ServeFile::new(fallback));
 
         if uri_path == "/" {
-            app = app.route_service("/", serve_dir);
+            app = app.fallback_service(serve_dir);
+        } else if uri_path == "/app" {
+            app_health = app_health.fallback_service(serve_dir);
         } else {
             app = app.nest_service(&uri_path, serve_dir);
         }
     }
+
+    app = app.nest("/app", app_health);
 
     Ok(app)
 }
