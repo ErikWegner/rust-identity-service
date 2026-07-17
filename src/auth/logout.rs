@@ -62,8 +62,6 @@ pub(crate) async fn logout(
     let app_uri = &logout_query_params.app_uri;
     let redirect_uri = &logout_query_params.redirect_uri;
 
-    let _ = session.flush().await;
-
     let logout_uri = &logout_app_settings.logout_uri;
     let session_tokens: Option<SessionTokens> = session.get(SESSION_KEY_JWT).await.unwrap_or(None);
     let id_token = session_tokens.map(|st| st.id_token).unwrap_or_default();
@@ -83,6 +81,8 @@ pub(crate) async fn logout(
         .secure(true)
         .http_only(true)
         .build();
+
+    let _ = session.flush().await;
 
     (
         StatusCode::SEE_OTHER,
