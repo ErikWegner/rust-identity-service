@@ -65,7 +65,7 @@ impl ProxyConfig {
                     None
                 }
             })
-            .unwrap_or(format!("{}{}", &self.base_url, uri))
+            .unwrap_or(format!("{}{}", self.base_url, uri))
     }
 
     pub(crate) fn try_init(
