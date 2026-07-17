@@ -114,7 +114,9 @@ pub(crate) async fn refresh(
             }
         };
 
-        refresh_state.refresh_lock.remove_user_is_refreshing(&userid);
+        refresh_state
+            .refresh_lock
+            .remove_user_is_refreshing(&userid);
         response
     })
     .await
