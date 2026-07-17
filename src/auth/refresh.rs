@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::collections::HashSet;
+use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
 use axum::{
@@ -20,32 +21,32 @@ use super::OIDCClient;
 
 #[derive(Debug)]
 pub(crate) struct RefreshLockManager {
-    inner: Mutex<Vec<String>>,
+    inner: RwLock<HashSet<String>>,
     remaining_secs_threshold: u64,
 }
 
 impl RefreshLockManager {
     pub(crate) fn new(remaining_secs_threshold: u64) -> Self {
         Self {
-            inner: (Mutex::new(vec![])),
+            inner: (RwLock::new(HashSet::new())),
             remaining_secs_threshold,
         }
     }
 
     fn user_is_refreshing(&self, userid: &String) -> bool {
-        let refreshing_users = self.inner.lock().unwrap();
+        let refreshing_users = self.inner.read().unwrap();
         refreshing_users.contains(userid)
     }
 
     fn set_user_is_refreshing(&self, userid: &str) {
         let userid = userid.to_string();
-        let mut refreshing_users = self.inner.lock().unwrap();
-        refreshing_users.push(userid);
+        let mut refreshing_users = self.inner.write().unwrap();
+        refreshing_users.insert(userid);
     }
 
     fn remove_user_is_refreshing(&self, userid: &str) {
-        let mut refreshing_users = self.inner.lock().unwrap();
-        refreshing_users.retain(|u| u != userid);
+        let mut refreshing_users = self.inner.write().unwrap();
+        refreshing_users.remove(userid);
     }
 }
 
@@ -69,8 +70,7 @@ pub(crate) async fn refresh(
             (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
         })?;
 
-    let refresh_lock = refresh_state.refresh_lock.clone();
-    if refresh_lock.user_is_refreshing(&userid) {
+    if refresh_state.refresh_lock.user_is_refreshing(&userid) {
         return Err((StatusCode::CONFLICT, "Refresh pending...").into_response());
     }
 
@@ -83,7 +83,7 @@ pub(crate) async fn refresh(
             (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
         })?;
 
-    if session_tokens.ttl_gt(refresh_lock.remaining_secs_threshold) {
+    if session_tokens.ttl_gt(refresh_state.refresh_lock.remaining_secs_threshold) {
         return Err((StatusCode::BAD_REQUEST, "Refresh too early".to_string()).into_response());
     }
 
@@ -93,7 +93,7 @@ pub(crate) async fn refresh(
     })?;
 
     let response = tokio::spawn(async move {
-        refresh_lock.set_user_is_refreshing(&userid);
+        refresh_state.refresh_lock.set_user_is_refreshing(&userid);
 
         let jwt = refresh_state
             .client
@@ -114,7 +114,7 @@ pub(crate) async fn refresh(
             }
         };
 
-        refresh_lock.remove_user_is_refreshing(&userid);
+        refresh_state.refresh_lock.remove_user_is_refreshing(&userid);
         response
     })
     .await
