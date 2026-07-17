@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, sync::Arc};
 
 use anyhow::{Context, Result};
 use session::{SameSiteSetting, SessionSetup};
@@ -7,7 +7,8 @@ use tracing::{debug, warn};
 
 use crate::{
     auth::{
-        AppConfigurationState, LoginAppSettings, LogoutAppSettings, LogoutBehavior, OIDCClient,
+        AppConfigurationState, ForwardAuthState, LoginAppSettings, LogoutAppSettings,
+        LogoutBehavior, OIDCClient, RefreshLockManager,
     },
     http::{ProxyConfig, app},
     session::redis_cons,
@@ -69,10 +70,13 @@ fn init_session_vars() -> Result<SessionSetup> {
     let same_site =
         SameSiteSetting::from_env_string(env::var("RIDSER_SESSION_COOKIE_SAMESITE").ok());
 
+    let cookie_domain = env::var("RIDSER_SESSION_COOKIE_DOMAIN").ok();
+
     Ok(SessionSetup {
         cookie_name: env::var("RIDSER_SESSION_COOKIE_NAME")
             .unwrap_or_else(|_| "ridser.sid".to_string()),
         cookie_path: env::var("RIDSER_SESSION_COOKIE_PATH").unwrap_or_else(|_| "/".to_string()),
+        cookie_domain,
         secret: env::var("RIDSER_SESSION_SECRET").context("missing RIDSER_SESSION_SECRET")?,
         ttl: None,
         secure_cookie,
@@ -86,7 +90,7 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
     let session_setup = init_session_vars()?;
     let session_layer = session_setup.get_session_layer(store)?;
     let client_id = oidc_client_from_env()?;
-    let oidc_client = init_oidc_client(&client_id).await?;
+    let oidc_client = Arc::new(init_oidc_client(&client_id).await?);
     let proxy_rules: Vec<_> = dotenvy::vars()
         .filter_map(|(key, value)| {
             if key.starts_with("RIDSER_PROXY_TARGET_RULE_") && value.contains("=>") {
@@ -106,14 +110,14 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
         .parse::<_>()
         .context("Cannot parse RIDSER_SESSION_REFRESH_THRESHOLD")?;
     let app_config = AppConfigurationState {
-        login_app_settings: LoginAppSettings::new(
+        login_app_settings: Arc::new(LoginAppSettings::new(
             env::var("RIDSER_LOGIN_REDIRECT_APP_URIS")
                 .context("missing RIDSER_LOGIN_REDIRECT_APP_URIS")?
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect(),
-        ),
-        logout_app_settings: LogoutAppSettings {
+        )),
+        logout_app_settings: Arc::new(LogoutAppSettings {
             client_id,
             logout_uri: env::var("RIDSER_LOGOUT_SSO_URI")
                 .context("Missing RIDSER_LOGOUT_SSO_URI")?,
@@ -123,17 +127,16 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect(),
-        },
+        }),
+        oidc_client: oidc_client.clone(),
+        client: client.clone(),
+        refresh_lock_manager: Arc::new(RefreshLockManager::new(remaining_secs_threshold)),
+        forward_auth_state: Arc::new(ForwardAuthState {
+            cookie_name: session_setup.cookie_name().to_string(),
+        }),
     };
 
-    let app = app(
-        oidc_client,
-        &session_layer,
-        &proxy_config,
-        client,
-        remaining_secs_threshold,
-        app_config,
-    );
+    let app = app(&session_layer, Arc::new(proxy_config), client, app_config);
 
     let listener = http::port_listener().await?;
     let bind_addr = listener

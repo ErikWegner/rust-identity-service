@@ -2,12 +2,14 @@ use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
     str::FromStr,
+    sync::Arc,
 };
 
 use anyhow::{Context, Result, anyhow};
 use axum::{
     Extension, Router,
     body::Body,
+    extract::State,
     http::{
         HeaderValue, Method, StatusCode, Uri,
         header::{AUTHORIZATION, COOKIE, HOST},
@@ -25,7 +27,7 @@ use tower_sessions_redis_store::fred::clients::Pool;
 use tracing::{debug, error, warn};
 
 use crate::{
-    auth::{AppConfigurationState, OIDCClient, SessionTokens, auth_routes},
+    auth::{AppConfigurationState, SessionTokens, auth_routes},
     monitoring::health_routes,
     session::{RidserSessionLayer, SESSION_KEY_CSRF_TOKEN, SESSION_KEY_JWT},
 };
@@ -46,7 +48,7 @@ pub(crate) struct ExtraProxyRoute {
 #[derive(Debug, Clone)]
 pub(crate) struct ProxyConfig {
     base_url: String,
-    cookie_name: String,
+    pub(crate) cookie_name: String,
     extra_routes: Vec<ExtraProxyRoute>,
 }
 
@@ -63,7 +65,7 @@ impl ProxyConfig {
                     None
                 }
             })
-            .unwrap_or(format!("{}{}", &self.base_url, uri))
+            .unwrap_or(format!("{}{}", self.base_url, uri))
     }
 
     pub(crate) fn try_init(
@@ -149,7 +151,7 @@ fn walk_dir(path: &str) -> Result<Vec<PathBuf>> {
 
 fn api_proxy(
     session_layer: &RidserSessionLayer,
-    proxy_config: &ProxyConfig,
+    proxy_config: Arc<ProxyConfig>,
 ) -> anyhow::Result<Router> {
     proxy_config.extra_routes.iter().for_each(|er| {
         debug!("Adding extra route: {:?}", er);
@@ -173,17 +175,17 @@ fn api_proxy(
                 .post(proxy)
                 .put(proxy),
         )
+        .with_state(proxy_config)
         .layer(
             ServiceBuilder::new()
                 .layer(session_layer.clone())
-                .layer(Extension(proxy_config.clone()))
                 .layer(Extension(proxy_client)),
         ))
 }
 
 #[debug_handler]
 async fn proxy(
-    Extension(proxy_config): Extension<ProxyConfig>,
+    State(proxy_config): State<Arc<ProxyConfig>>,
     Extension(client): Extension<ProxyClient>,
     session: Session,
     jar: CookieJar,
@@ -274,27 +276,18 @@ async fn proxy(
 }
 
 pub(crate) fn app(
-    oidc_client: OIDCClient,
     session_layer: &RidserSessionLayer,
-    proxy_config: &ProxyConfig,
+    proxy_config: Arc<ProxyConfig>,
     client: Pool,
-    remaining_secs_threshold: u64,
     app_config: AppConfigurationState,
 ) -> Result<Router> {
     let spa_apps = walk_dir("files")?;
+
+    let mut app_health = health_routes(client.clone());
+
     let mut app = Router::new()
-        .nest("/api", api_proxy(session_layer, proxy_config)?)
-        .nest("/app", health_routes(client.clone()))
-        .nest(
-            "/auth",
-            auth_routes(
-                oidc_client,
-                session_layer,
-                client.clone(),
-                remaining_secs_threshold,
-                app_config,
-            ),
-        );
+        .nest("/api", api_proxy(session_layer, proxy_config.clone())?)
+        .nest("/auth", auth_routes(session_layer, app_config));
 
     for spa_app in spa_apps {
         let components: Vec<_> = spa_app
@@ -314,11 +307,15 @@ pub(crate) fn app(
         let serve_dir = ServeDir::new(fs_path).not_found_service(ServeFile::new(fallback));
 
         if uri_path == "/" {
-            app = app.route_service("/", serve_dir);
+            app = app.fallback_service(serve_dir);
+        } else if uri_path == "/app" {
+            app_health = app_health.fallback_service(serve_dir);
         } else {
             app = app.nest_service(&uri_path, serve_dir);
         }
     }
+
+    app = app.nest("/app", app_health);
 
     Ok(app)
 }

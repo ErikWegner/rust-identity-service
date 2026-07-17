@@ -43,10 +43,10 @@ implement a _Backend for Frontend_ pattern.
 
 You can use VSCode with devcontainer extension, or run the containers yourself:
 
-1. `$ cd .devcontainer`
-2. `docker compose up -d`
-3. `docker compose exec -u ${UID}:${GID} -it ridser /bin/bash`
-4. `rustup update stable`
+1. `docker compose -f .devcontainer/docker-compose.yml -f .devcontainer/docker-compose.e2e.yml up -d`
+2. `docker compose -f .devcontainer/docker-compose.yml -f .devcontainer/docker-compose.e2e.yml exec -u ${UID}:${GID} -it ridser /bin/bash`
+3. `rustup update stable`
+4. `cd /workspace`
 5. `export RUST_LOG=ridser=debug,info`
 
 ## Testing

@@ -1,6 +1,7 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use axum::{
-    Extension,
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
@@ -37,7 +38,7 @@ pub(crate) struct LoginQueryParams {
     kc_idp_hint: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct LoginAppSettings {
     allowed_app_uris_match: Vec<String>,
     allowed_app_uris_startswith: Vec<String>,
@@ -75,14 +76,22 @@ impl LoginAppSettings {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct LoginState {
+    pub(super) login_app_settings: Arc<LoginAppSettings>,
+    pub(super) oidc_client: Arc<OIDCClient>,
+    pub(super) client: Pool,
+}
+
 #[debug_handler]
 pub(crate) async fn login(
-    State(login_app_settings): State<LoginAppSettings>,
-    Extension(oidc_client): Extension<OIDCClient>,
-    Extension(client): Extension<Pool>,
+    State(login_state): State<LoginState>,
     session: Session,
     login_query_params: Query<LoginQueryParams>,
 ) -> Result<Response, Response> {
+    let login_app_settings = &login_state.login_app_settings;
+    let oidc_client = &login_state.oidc_client;
+    let client = &login_state.client;
     if !login_app_settings.is_app_uri_allowed(login_query_params.app_uri.as_str()) {
         debug!("app_uri {} is not allowed", login_query_params.app_uri);
         return Err((StatusCode::BAD_REQUEST, "Invalid app_uri").into_response());

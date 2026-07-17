@@ -10,6 +10,28 @@ http:
       entryPoints:
         - ridser
       service: ridser
+    ridser-forward-auth-route:
+      rule: PathPrefix(`/api/fwauth`)
+      entryPoints:
+        - ridser
+      service: rsecho
+      middlewares:
+        - ridser-forward-auth-middleware
+    dashboard:
+      rule: "PathPrefix(`/traefik/dashboard`) || PathPrefix(`/traefik/api`)"
+      entryPoints:
+        - ridser
+        - keycloak
+      service: api@internal
+
+  middlewares:
+    ridser-forward-auth-middleware:
+      forwardAuth:
+        address: "http://ridser:3000/auth"
+        authResponseHeaders:
+          - "Authorization"
+          - "Cookie"
+
   services:
     keycloak:
       loadBalancer:
@@ -19,3 +41,7 @@ http:
       loadBalancer:
         servers:
           - url: "http://ridser:3000"
+    rsecho:
+      loadBalancer:
+        servers:
+          - url: "http://echo:3000"

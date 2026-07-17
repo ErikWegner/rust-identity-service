@@ -1,41 +1,42 @@
+use std::sync::Arc;
+use std::time::SystemTime;
+
+use axum::{
+    Router,
+    extract::FromRef,
+    routing::{get, post},
+};
+use openidconnect::{
+    AccessToken, CsrfToken, Nonce, PkceCodeVerifier, RefreshToken, core::CoreIdToken, url::Url,
+};
+use rand::prelude::*;
+use serde::{Deserialize, Serialize};
+use tower_sessions_redis_store::fred::clients::Pool;
+
 mod callback;
 mod csrftoken;
+mod forwardauth;
 mod login;
 mod logout;
 mod oidcclient;
 mod refresh;
 mod status;
 
-use std::time::SystemTime;
-
-pub use login::LoginAppSettings;
-pub use logout::LogoutAppSettings;
-pub use logout::LogoutBehavior;
-pub use oidcclient::OIDCClient;
-
-use axum::{
-    Extension, Router,
-    extract::FromRef,
-    routing::{get, post},
-};
-
-use openidconnect::{
-    AccessToken, CsrfToken, Nonce, PkceCodeVerifier, RefreshToken, core::CoreIdToken, url::Url,
-};
-use serde::{Deserialize, Serialize};
-use tower::ServiceBuilder;
-use tower_sessions_redis_store::fred::clients::Pool;
-
+use crate::auth::callback::CallbackState;
+use crate::auth::login::LoginState;
+use crate::auth::refresh::RefreshState;
 use crate::session::RidserSessionLayer;
+pub(crate) use forwardauth::ForwardAuthState;
+pub(crate) use login::LoginAppSettings;
+pub(crate) use logout::LogoutAppSettings;
+pub(crate) use logout::LogoutBehavior;
+pub(crate) use oidcclient::OIDCClient;
+pub(crate) use refresh::RefreshLockManager;
 
 use self::logout::logout_callback;
 use self::{
-    callback::callback,
-    csrftoken::csrftoken,
-    login::login,
-    logout::logout,
-    refresh::{RefreshLockManager, refresh},
-    status::status,
+    callback::callback, csrftoken::csrftoken, forwardauth::forwardauth, login::login,
+    logout::logout, refresh::refresh, status::status,
 };
 
 #[derive(Debug, Clone)]
@@ -120,55 +121,68 @@ pub(crate) struct LoginCallbackSessionParameters {
 
 #[derive(Clone)]
 pub(crate) struct AppConfigurationState {
-    pub(crate) login_app_settings: LoginAppSettings,
-    pub(crate) logout_app_settings: LogoutAppSettings,
+    pub(crate) login_app_settings: Arc<LoginAppSettings>,
+    pub(crate) logout_app_settings: Arc<LogoutAppSettings>,
+    pub(crate) oidc_client: Arc<OIDCClient>,
+    pub(crate) client: Pool,
+    pub(crate) refresh_lock_manager: Arc<RefreshLockManager>,
+    pub(crate) forward_auth_state: Arc<ForwardAuthState>,
 }
 
-impl FromRef<AppConfigurationState> for LoginAppSettings {
+impl FromRef<AppConfigurationState> for Arc<LoginAppSettings> {
     fn from_ref(app_state: &AppConfigurationState) -> Self {
         app_state.login_app_settings.clone()
     }
 }
 
-impl FromRef<AppConfigurationState> for LogoutAppSettings {
-    fn from_ref(app_state: &AppConfigurationState) -> LogoutAppSettings {
+impl FromRef<AppConfigurationState> for Arc<LogoutAppSettings> {
+    fn from_ref(app_state: &AppConfigurationState) -> Self {
         app_state.logout_app_settings.clone()
     }
 }
 
+impl FromRef<AppConfigurationState> for LoginState {
+    fn from_ref(app_state: &AppConfigurationState) -> Self {
+        Self {
+            login_app_settings: app_state.login_app_settings.clone(),
+            oidc_client: app_state.oidc_client.clone(),
+            client: app_state.client.clone(),
+        }
+    }
+}
+
+impl FromRef<AppConfigurationState> for CallbackState {
+    fn from_ref(app_state: &AppConfigurationState) -> Self {
+        Self {
+            oidc_client: app_state.oidc_client.clone(),
+            client: app_state.client.clone(),
+        }
+    }
+}
+
+impl FromRef<AppConfigurationState> for RefreshState {
+    fn from_ref(app_state: &AppConfigurationState) -> Self {
+        Self {
+            refresh_lock: app_state.refresh_lock_manager.clone(),
+            client: app_state.oidc_client.clone(),
+        }
+    }
+}
+
+impl FromRef<AppConfigurationState> for Arc<ForwardAuthState> {
+    fn from_ref(app_state: &AppConfigurationState) -> Self {
+        app_state.forward_auth_state.clone()
+    }
+}
 pub(crate) fn auth_routes(
-    oidc_client: OIDCClient,
     session_layer: &RidserSessionLayer,
-    client: Pool,
-    remaining_secs_threshold: u64,
     app_config: AppConfigurationState,
 ) -> Router {
-    let rlm = RefreshLockManager::new(remaining_secs_threshold);
     Router::new()
-        .route(
-            "/login",
-            get(login).layer(
-                ServiceBuilder::new()
-                    .layer(Extension(oidc_client.clone()))
-                    .layer(Extension(client.clone())),
-            ),
-        )
-        .route(
-            "/callback",
-            get(callback).layer(
-                ServiceBuilder::new()
-                    .layer(Extension(oidc_client.clone()))
-                    .layer(Extension(client.clone())),
-            ),
-        )
-        .route(
-            "/refresh",
-            post(refresh).layer(
-                ServiceBuilder::new()
-                    .layer(Extension(rlm))
-                    .layer(Extension(oidc_client)),
-            ),
-        )
+        .route("/", get(forwardauth))
+        .route("/login", get(login))
+        .route("/callback", get(callback))
+        .route("/refresh", post(refresh))
         .route("/csrftoken", post(csrftoken))
         .route("/status", get(status))
         .route("/logout", get(logout))
@@ -178,7 +192,8 @@ pub(crate) fn auth_routes(
 }
 
 pub(crate) fn random_alphanumeric_string(length: usize) -> String {
-    rand::Rng::sample_iter(rand::rng(), &rand::distr::Alphanumeric)
+    rand::rng()
+        .sample_iter(rand::distr::Alphanumeric)
         .take(length)
         .map(char::from)
         .collect::<String>()
@@ -218,7 +233,10 @@ mod tests {
         matchers::{method, path},
     };
 
-    use crate::session::{RidserSessionLayer, SessionSetup, redis_cons};
+    use crate::{
+        auth::{ForwardAuthState, csrftoken::CsrfTokenResponse, refresh::RefreshLockManager},
+        session::{RidserSessionLayer, SessionSetup, redis_cons},
+    };
 
     use super::{
         AppConfigurationState, LoginAppSettings, OIDCClient, auth_routes,
@@ -414,7 +432,7 @@ mod tests {
         cookie_name: String,
         issuer_url: String,
         mock_server: MockServer,
-        oidc_client: OIDCClient,
+        oidc_client: Arc<OIDCClient>,
         redis_pool: Pool,
         session_layer: RidserSessionLayer,
     }
@@ -443,10 +461,11 @@ mod tests {
                 .mount(&mock_server)
                 .await;
             let auth_url = format!("{}/authorize", mock_server.uri());
-            let oidc_client =
+            let oidc_client = Arc::new(
                 OIDCClient::build(&issuer_url, &client_id, &client_secret, Some(auth_url))
                     .await
-                    .expect("OIDCClient creation failed");
+                    .expect("OIDCClient creation failed"),
+            );
 
             let session_secret: String = random_alphanumeric_string(64);
             let (session_store, redis_pool) = redis_cons(
@@ -460,6 +479,7 @@ mod tests {
                 secret: session_secret.clone(),
                 cookie_name: cookie_name.clone(),
                 cookie_path: "/".to_string(),
+                cookie_domain: None,
                 ttl: Some(time::Duration::new(300, 0)),
                 secure_cookie: true,
                 same_site: crate::SameSiteSetting::Strict,
@@ -482,11 +502,11 @@ mod tests {
         pub fn router(&self) -> Router {
             let redis_pool = self.redis_pool.clone();
             let app_config = AppConfigurationState {
-                login_app_settings: LoginAppSettings::new(vec![
+                login_app_settings: Arc::new(LoginAppSettings::new(vec![
                     "http://example.com".to_string(),
                     "http://example.org/my/app/*".to_string(),
-                ]),
-                logout_app_settings: LogoutAppSettings {
+                ])),
+                logout_app_settings: Arc::new(LogoutAppSettings {
                     client_id: self.client_id.clone(),
                     logout_uri: format!("{}/logout", self.mock_server.uri()),
                     _behavior: LogoutBehavior::FrontChannelLogoutWithIdToken,
@@ -494,18 +514,15 @@ mod tests {
                         "http://logout.example.com".to_string(),
                         "http://example.org/it/index".to_string(),
                     ],
-                },
+                }),
+                oidc_client: self.oidc_client.clone(),
+                client: redis_pool.clone(),
+                refresh_lock_manager: Arc::new(RefreshLockManager::new(600)),
+                forward_auth_state: Arc::new(ForwardAuthState {
+                    cookie_name: self.cookie_name.clone(),
+                }),
             };
-            Router::new().nest(
-                "/auth",
-                auth_routes(
-                    self.oidc_client.clone(),
-                    &self.session_layer,
-                    redis_pool,
-                    20,
-                    app_config,
-                ),
-            )
+            Router::new().nest("/auth", auth_routes(&self.session_layer, app_config))
         }
 
         pub async fn setup_id_token_nonce(&self, header: &HeaderValue) {
@@ -656,6 +673,37 @@ mod tests {
             );
 
             authenticated_cookie.to_string()
+        }
+
+        pub async fn get_csrf_token(&self, app: &mut Router, session_cookie: &str) -> String {
+            let csrf_token_request = Request::builder()
+                .method("POST")
+                .uri("/auth/csrftoken")
+                .header(COOKIE, session_cookie)
+                .body(Body::empty())
+                .unwrap();
+            let response = ServiceExt::<Request<Body>>::ready(app)
+                .await
+                .unwrap()
+                .call(csrf_token_request)
+                .await
+                .unwrap();
+            let status = response.status();
+            let body = String::from_utf8(
+                response
+                    .into_body()
+                    .collect()
+                    .await
+                    .expect("collect")
+                    .to_bytes()
+                    .to_vec(),
+            )
+            .unwrap();
+            assert_eq!(status, 200, "get_csrf_token: {body}");
+            assert_ne!(body.len(), 0, "Empty get_csrf_token");
+            let t: CsrfTokenResponse =
+                serde_json::from_str(body.as_str()).expect("CsrfTokenResponse deserialize");
+            t.token().to_string()
         }
     }
 }
