@@ -52,9 +52,7 @@ document.getElementById('logout').onclick = () => {
     const params = new URLSearchParams({
         redirect_uri: oidCallbackUrl,
         app_uri: appCallbackUrl,
-    })
-        .map(([key, value]) => key + '=' + encodeURIComponent(value))
-        .join('&');
+    });
 
     window.location = '/auth/logout?' + params.toString();
 };
