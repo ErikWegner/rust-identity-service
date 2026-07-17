@@ -3,16 +3,22 @@ use std::sync::Arc;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Response},
 };
+use axum_extra::extract::CookieJar;
 use axum_macros::debug_handler;
+use cookie::Cookie;
 use serde::Deserialize;
+use time::Duration;
 use tower_sessions::Session;
 use tracing::{trace, warn};
 
 use crate::session::SESSION_KEY_JWT;
 
 use super::SessionTokens;
+
+const COOKIE_NAME_LOGOUT_APP_URI: &str = "ridser_logout_app_uri";
+const LOGOUT_APP_URI_COOKIE_TTL: i64 = 60;
 
 #[derive(Clone, Debug)]
 pub enum LogoutBehavior {
@@ -53,46 +59,74 @@ pub(crate) async fn logout(
     session: Session,
     logout_query_params: Query<LogoutQueryParams>,
 ) -> Response {
-    let _ = session
-        .insert("ridser_logout_app_uri", logout_query_params.app_uri.clone())
-        .await;
+    let app_uri = &logout_query_params.app_uri;
+    let redirect_uri = &logout_query_params.redirect_uri;
+
+    let _ = session.flush().await;
+
     let logout_uri = &logout_app_settings.logout_uri;
     let session_tokens: Option<SessionTokens> = session.get(SESSION_KEY_JWT).await.unwrap_or(None);
     let id_token = session_tokens.map(|st| st.id_token).unwrap_or_default();
-    let post_logout_redirect_uri = logout_query_params.redirect_uri.clone();
     let uri = if id_token.is_empty() {
         format!(
-            "{logout_uri}?post_logout_redirect_uri={post_logout_redirect_uri}&client_id={}",
+            "{logout_uri}?post_logout_redirect_uri={redirect_uri}&client_id={}",
             logout_app_settings.client_id
         )
     } else {
-        format!(
-            "{logout_uri}?id_token_hint={id_token}&post_logout_redirect_uri={post_logout_redirect_uri}"
-        )
+        format!("{logout_uri}?id_token_hint={id_token}&post_logout_redirect_uri={redirect_uri}")
     };
 
-    Redirect::to(uri.as_str()).into_response()
+    let app_uri_cookie = Cookie::build((COOKIE_NAME_LOGOUT_APP_URI, app_uri.as_str()))
+        .path("/auth")
+        .same_site(cookie::SameSite::Lax)
+        .max_age(Duration::seconds(LOGOUT_APP_URI_COOKIE_TTL))
+        .secure(true)
+        .http_only(true)
+        .build();
+
+    (
+        StatusCode::SEE_OTHER,
+        [
+            ("location", uri.as_str()),
+            ("set-cookie", &app_uri_cookie.to_string()),
+        ],
+    )
+        .into_response()
 }
 
 #[debug_handler]
 pub(crate) async fn logout_callback(
     State(logout_app_settings): State<Arc<LogoutAppSettings>>,
     session: Session,
+    jar: CookieJar,
 ) -> Response {
-    let app_uri = session
-        .get::<String>("ridser_logout_app_uri")
-        .await
-        .unwrap_or_default()
+    let _ = session.flush().await;
+
+    let app_uri = jar
+        .get(COOKIE_NAME_LOGOUT_APP_URI)
+        .map(|c| c.value().to_string())
         .unwrap_or_else(|| {
-            warn!("ridser_logout_app_uri not found in session");
+            warn!("ridser_logout_app_uri cookie not found");
             "/".to_string()
         });
 
-    let _: Result<(), _> = session.flush().await;
+    let clear_cookie = Cookie::build((COOKIE_NAME_LOGOUT_APP_URI, ""))
+        .path("/auth")
+        .max_age(Duration::seconds(0))
+        .build();
+
     if !logout_app_settings.is_app_uri_allowed(&app_uri) {
         return (StatusCode::BAD_REQUEST, "Invalid app_uri").into_response();
     }
-    Redirect::to(&app_uri).into_response()
+
+    (
+        StatusCode::SEE_OTHER,
+        [
+            ("location", app_uri.as_str()),
+            ("set-cookie", &clear_cookie.to_string()),
+        ],
+    )
+        .into_response()
 }
 
 #[cfg(test)]
@@ -135,6 +169,11 @@ mod tests {
                 .await
                 .unwrap();
             let status = response.status();
+            let set_cookie = response
+                .headers()
+                .get(SET_COOKIE)
+                .map(|hv| hv.to_str().unwrap().to_string())
+                .unwrap_or_default();
             let body = String::from_utf8(
                 response
                     .into_body()
@@ -151,6 +190,14 @@ mod tests {
                 status,
                 StatusCode::SEE_OTHER,
                 "response should be redirect, but {body}"
+            );
+            assert!(
+                set_cookie.contains("ridser_logout_app_uri="),
+                "Should set app_uri cookie, but {set_cookie}"
+            );
+            assert!(
+                set_cookie.contains("Max-Age=60"),
+                "Cookie should have 60s TTL, but {set_cookie}"
             );
         }
     }
@@ -230,6 +277,11 @@ mod tests {
             .await
             .unwrap();
         let status = response.status();
+        let set_cookie = response
+            .headers()
+            .get(SET_COOKIE)
+            .map(|hv| hv.to_str().unwrap().to_string())
+            .unwrap_or_default();
         let body = String::from_utf8(
             response
                 .into_body()
@@ -247,6 +299,10 @@ mod tests {
             StatusCode::SEE_OTHER,
             "response should be redirect, but {body}"
         );
+        assert!(
+            set_cookie.contains("ridser_logout_app_uri="),
+            "Should set app_uri cookie, but {set_cookie}"
+        );
     }
 
     #[tokio::test]
@@ -257,8 +313,8 @@ mod tests {
         let session_cookie = m.setup_authenticated_state(&mut app).await;
         let app_uri = "http://logout.example.com".to_string();
 
-        // Act
-        let _response_logout1 = ServiceExt::<Request<Body>>::ready(&mut app)
+        // Act - call logout
+        let logout_response = ServiceExt::<Request<Body>>::ready(&mut app)
             .await
             .unwrap()
             .call(
@@ -272,13 +328,36 @@ mod tests {
             )
             .await
             .unwrap();
+
+        let logout_set_cookie = logout_response
+            .headers()
+            .get(SET_COOKIE)
+            .map(|hv| hv.to_str().unwrap().to_string())
+            .unwrap_or_default();
+
+        // Extract the app_uri cookie value from Set-Cookie header
+        let app_uri_cookie_value = logout_set_cookie
+            .split(';')
+            .find(|part| part.trim().starts_with("ridser_logout_app_uri="))
+            .map(|part| {
+                part.trim()
+                    .strip_prefix("ridser_logout_app_uri=")
+                    .unwrap()
+                    .to_string()
+            })
+            .unwrap_or_default();
+
+        // Act - call logoutcallback with the app_uri cookie
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
             .await
             .unwrap()
             .call(
                 Request::builder()
                     .uri("/auth/logoutcallback".to_string())
-                    .header(COOKIE, session_cookie)
+                    .header(
+                        COOKIE,
+                        format!("ridser_logout_app_uri={app_uri_cookie_value}"),
+                    )
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -318,7 +397,7 @@ mod tests {
             "Should redirect to the app uri"
         );
         assert!(
-            cookie.contains("; Max-Age=0;"),
+            cookie.contains("Max-Age=0"),
             "Cookie should be marked to be expired, but {cookie}"
         );
     }

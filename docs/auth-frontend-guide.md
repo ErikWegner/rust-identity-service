@@ -256,25 +256,32 @@ Start the SSO logout flow.
 
 **Response:** `303 See Other` redirect to the SSO logout endpoint.
 
+**Behavior:**
+
+1. Flushes the local session immediately (clears all data, expires the session cookie)
+2. Stores `app_uri` in a short-lived cookie (`ridser_logout_app_uri`, 60s TTL) for the callback
+3. Redirects to the SSO logout endpoint
+
 The SSO logout URL is constructed as:
 
 - If ID token available: `{RIDSER_LOGOUT_SSO_URI}?id_token_hint={id_token}&post_logout_redirect_uri={redirect_uri}`
 - If no ID token: `{RIDSER_LOGOUT_SSO_URI}?post_logout_redirect_uri={redirect_uri}&client_id={client_id}`
 
-The `app_uri` is stored in the session and consumed by `/auth/logoutcallback`.
+The `app_uri` cookie is consumed by `/auth/logoutcallback`. The SSO roundtrip is best-effort — the local session is already cleaned up regardless of whether the OIDC provider redirects back.
 
 ---
 
 ### `GET /auth/logoutcallback` — Post-Logout Redirect
 
-This endpoint is called by the OIDC provider (or the browser) after SSO logout completes. It clears the session and redirects back to the SPA.
+This endpoint is called by the OIDC provider (or the browser) after SSO logout completes. It redirects back to the SPA.
 
 **Behavior:**
 
-1. Reads `app_uri` from session (stored during `/auth/logout`)
-2. Flushes the session (clears all data, expires the cookie)
-3. Validates `app_uri` against `RIDSER_LOGOUT_REDIRECT_APP_URIS` (exact match only — no wildcards)
-4. Redirects to `app_uri`
+1. Reads `app_uri` from the `ridser_logout_app_uri` cookie (set during `/auth/logout`)
+2. Clears the `app_uri` cookie
+3. Flushes the session as a safety net (no-op if already flushed in `/auth/logout`)
+4. Validates `app_uri` against `RIDSER_LOGOUT_REDIRECT_APP_URIS` (exact match only — no wildcards)
+5. Redirects to `app_uri`
 
 **Response:** `303 See Other` redirect to the `app_uri`.
 
@@ -393,16 +400,17 @@ sequenceDiagram
 
     Note over SPA: User clicks "Logout"
     SPA->>ridser: GET /auth/logout?app_uri=...&redirect_uri=...
-    ridser->>Redis: Store app_uri in session
+    ridser->>Redis: Flush session immediately
     ridser->>ridser: Read id_token from session
-    ridser-->>SPA: 303 → SSO logout URL (with id_token_hint)
+    ridser->>ridser: Set app_uri cookie (60s TTL)
+    ridser-->>SPA: 303 → SSO logout URL (with/without id_token_hint)
     SPA->>OIDC: Redirect to SSO logout
     OIDC-->>SPA: 303 → redirect_uri (/auth/logoutcallback)
-    SPA->>ridser: GET /auth/logoutcallback (with session cookie)
-    ridser->>Redis: Read app_uri from session
-    ridser->>Redis: Flush session (clear all data)
+    SPA->>ridser: GET /auth/logoutcallback (with app_uri cookie)
+    ridser->>ridser: Read app_uri from cookie
+    ridser->>ridser: Clear app_uri cookie
     ridser->>ridser: Validate app_uri against logout allowlist
-    ridser-->>SPA: 303 → app_uri (with expired cookie: Max-Age=0)
+    ridser-->>SPA: 303 → app_uri (with cleared cookie)
 ```
 
 ### Silent SSO Check Flow
@@ -595,7 +603,7 @@ Key environment variables that affect the frontend integration:
 1. **Always send credentials (cookies)** with `fetch` by using `credentials: "include"` or relying on same-origin requests
 2. **CSRF is required** for all non-GET requests to `/api/*` — fetch it once via `POST /auth/csrftoken`, cache it in memory
 3. **`app_uri` must be allowlisted** — the SPA must know which URIs are configured on the server
-4. **Logout callback** is a two-step process: `/auth/logout` initiates SSO logout, `/auth/logoutcallback` completes it
+4. **Logout callback** is a two-step process: `/auth/logout` flushes the session and sets an `app_uri` cookie, `/auth/logoutcallback` reads the cookie and redirects
 5. **Session regeneration** happens on login and callback — the session cookie changes, and old session data is purged from Redis
 6. **`prompt=none`** is the mechanism for silent SSO checks via iframe — requires `SameSite=None` cookies or same-origin deployment
 7. **The OIDC `redirect_uri`** must match what's registered at the OIDC provider — typically `{origin}/auth/callback`
