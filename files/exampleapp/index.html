@@ -1,66 +1,101 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/png" href="/favicon.png" sizes="32x32">
-    <link rel="icon" type="image/png" href="/favicon.png" sizes="96x96">
-    <title>Example APP</title>
-    <style>
-        body {
-            font-size: 200%;
-        }
-
-        #echoresponse {
-            font-size: 50%;
-            word-break: break-word;
-            br {
-                margin-bottom: 1ex;
+    <head>
+        <meta charset="UTF-8" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <link rel="icon" type="image/png" href="/favicon.png" sizes="32x32" />
+        <link rel="icon" type="image/png" href="/favicon.png" sizes="96x96" />
+        <title>Example APP</title>
+        <style>
+            body {
+                font-size: 200%;
             }
-        }
-    </style>
-</head>
 
-<body>
-    <p>
-        This is the example app.
-    </p>
-    <p>
-        This is the example app served from the <code>files/exampleapp/</code> directory.
-        Visit <a
-            href="https://github.com/ErikWegner/rust-identity-service">https://github.com/ErikWegner/rust-identity-service</a>
-        for more information.
-    </p>
-    <p>
-        Login-Status: <span id="loginStatus"></span><br />
-        CSRF-Token: <span id="csrftoken"></span><br />
-    </p>
-    <div>
-        <h2>Actions</h2>
+            #echoresponse {
+                font-size: 50%;
+                word-break: break-word;
+                br {
+                    margin-bottom: 1ex;
+                }
+            }
+
+            button {
+                padding: 0.5rem 1rem;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                background: #fff;
+                cursor: pointer;
+                font-size: 0.9rem;
+
+                &#login {
+                    background: #2563eb;
+                    color: #fff;
+                    border-color: #2563eb;
+
+                    &:hover {
+                        background: #1d4ed8;
+                    }
+                }
+
+                &#logout {
+                    background: #dc2626;
+                    color: #fff;
+                    border-color: #dc2626;
+                    &:hover {
+                        background: #b91c1c;
+                    }
+                }
+            }
+        </style>
+    </head>
+
+    <body>
+        <p>This is the example app.</p>
         <p>
-            <button id="login" type="button">Login</button>
-            <button id="logout" type="button">Logout</button>
-            <button id="refresh" type="button">Refresh</button>
-            <button id="requestcsrftoken" type="button">CSRF-Token</button>
-            <button id="echorequest" type="button">Echo request</button>
-            <button id="forwardauthrequest" type="button">Forward auth request</button> <a class="help" href="https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/forwardauth/">?</a>
+            This is the example app served from the
+            <code>files/exampleapp/</code> directory. Visit
+            <a href="https://github.com/ErikWegner/rust-identity-service"
+                >https://github.com/ErikWegner/rust-identity-service</a
+            >
+            for more information.
         </p>
-    </div>
-    <p>
-        <div style="display: flex;">
+        <p>
+            Login-Status: <span id="loginStatus"></span><br />
+            CSRF-Token: <span id="csrftoken"></span><br />
+        </p>
+        <div>
+            <h2>Actions</h2>
+            <p>
+                <button id="login" type="button">Login</button>
+                <button id="logout" type="button">Logout</button>
+                <button id="refresh" type="button">Refresh</button>
+                <button id="requestcsrftoken" type="button">CSRF-Token</button>
+                <button id="sso" type="button">SSO</button>
+                <button id="echorequest" type="button">Echo request</button>
+                <button id="forwardauthrequest" type="button">
+                    Forward auth request
+                </button>
+                <a
+                    class="help"
+                    href="https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/forwardauth/"
+                    >?</a
+                >
+            </p>
+        </div>
+        <div style="display: flex">
             <div>
-                Message: <br />
-                <textarea id="userinput" cols="40" rows="15"></textarea>
+                <div>
+                    Message: <br />
+                    <textarea id="userinput" cols="40" rows="15"></textarea>
+                </div>
+                <div id="ssoarea"></div>
             </div>
             <div>
                 Response: <br />
                 <div id="echoresponse"></div>
             </div>
         </div>
-    </p>
-    <script type="module" src="sample.js"></script>
-</body>
-
+        <script type="module" src="sample.js"></script>
+    </body>
 </html>

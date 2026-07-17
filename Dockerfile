@@ -1,5 +1,5 @@
 ## Build ridser binary
-FROM rust:1.96.0-alpine3.24 AS builder
+FROM rust:1.97.1-alpine3.24 AS builder
 
 WORKDIR /usr/src
 RUN USER=root cargo new ridser
