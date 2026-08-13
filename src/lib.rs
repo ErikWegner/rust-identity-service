@@ -128,6 +128,7 @@ pub async fn run_ridser() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|s| s.trim().to_string())
                 .collect(),
             same_site_setting: session_setup.same_site.clone(),
+            cookie_path: session_setup.cookie_path.clone(),
         }),
         oidc_client: oidc_client.clone(),
         client: client.clone(),

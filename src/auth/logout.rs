@@ -45,6 +45,7 @@ pub struct LogoutAppSettings {
     pub(crate) _behavior: LogoutBehavior,
     pub(crate) allowed_app_uris_match: Vec<String>,
     pub(crate) same_site_setting: SameSiteSetting,
+    pub(crate) cookie_path: String,
 }
 
 impl LogoutAppSettings {
@@ -76,7 +77,7 @@ pub(crate) async fn logout(
     };
 
     let app_uri_cookie = Cookie::build((COOKIE_NAME_LOGOUT_APP_URI, app_uri.as_str()))
-        .path("/auth")
+        .path(logout_app_settings.cookie_path.as_str())
         .same_site(
             logout_app_settings
                 .same_site_setting
@@ -116,7 +117,7 @@ pub(crate) async fn logout_callback(
         });
 
     let clear_cookie = Cookie::build((COOKIE_NAME_LOGOUT_APP_URI, ""))
-        .path("/auth")
+        .path(logout_app_settings.cookie_path.as_str())
         .max_age(Duration::seconds(0))
         .build();
 
