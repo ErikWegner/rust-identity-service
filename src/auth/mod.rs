@@ -515,6 +515,7 @@ mod tests {
                         "http://example.org/it/index".to_string(),
                     ],
                     same_site_setting: crate::session::SameSiteSetting::None,
+                    cookie_path: "/auth".to_string(),
                 }),
                 oidc_client: self.oidc_client.clone(),
                 client: redis_pool.clone(),
