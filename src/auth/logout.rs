@@ -13,7 +13,7 @@ use time::Duration;
 use tower_sessions::Session;
 use tracing::{trace, warn};
 
-use crate::session::SESSION_KEY_JWT;
+use crate::session::{SESSION_KEY_JWT, SameSiteSetting};
 
 use super::SessionTokens;
 
@@ -44,6 +44,7 @@ pub struct LogoutAppSettings {
     pub(crate) logout_uri: String,
     pub(crate) _behavior: LogoutBehavior,
     pub(crate) allowed_app_uris_match: Vec<String>,
+    pub(crate) same_site_setting: SameSiteSetting,
 }
 
 impl LogoutAppSettings {
@@ -76,7 +77,11 @@ pub(crate) async fn logout(
 
     let app_uri_cookie = Cookie::build((COOKIE_NAME_LOGOUT_APP_URI, app_uri.as_str()))
         .path("/auth")
-        .same_site(cookie::SameSite::Lax)
+        .same_site(
+            logout_app_settings
+                .same_site_setting
+                .to_tower_sessions_same_site(),
+        )
         .max_age(Duration::seconds(LOGOUT_APP_URI_COOKIE_TTL))
         .secure(true)
         .http_only(true)
